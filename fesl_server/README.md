@@ -179,7 +179,7 @@ See [`stuff/info/`](stuff/info) for the original notes.
 
 ## Contributing
 
-Fork the repository and open a [pull request](https://github.com/blue-tj01/bf2142stats_emu/pulls). New captures, protocol notes and tests are as welcome as code. Please run `make -C tests test` before submitting.
+Fork the repository and open a [pull request](https://github.com/blue-tj01/bf2142stats_emu/pulls). New captures, protocol notes and tests are as welcome as code. The [real-game test plan](docs/real-game-test-plan.md) describes how to record sessions with the real client and dedicated server. Please run `make -C tests test` before submitting.
 
 ## License
 
