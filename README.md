@@ -44,7 +44,7 @@ flowchart LR
 ```
 
 - **Fesl login server** (`fesl_login_server/`) handles accounts and logins in place of EA's FESL and GameSpy services.
-- **Open FESL server** (`fesl_server/`) is an open-source replacement for the closed login server, still in development. It handles FESL Hello, Login and GetObjectInventory so far, but not GameSpy yet. See its [README](fesl_server/README.md).
+- **Open FESL server** (`fesl_server/`) is an open-source replacement for the closed login server, still in development. It handles FESL Hello, Login and GetObjectInventory so far, with accounts from the same `account` table, but not GameSpy yet. See its [README](fesl_server/README.md).
 - **Web stats server** (`web/`) answers the game's stats requests (`getplayerinfo.aspx`, `getleaderboard.aspx`, …) and receives round results from game servers (`bf2142statistics.php`).
 - **Game server Python scripts** (`python/`) collect each player's stats during a round and send them to the web server when it ends.
 - The game client and game server are pointed at your server through a patched executable or the Windows hosts file.
@@ -129,6 +129,9 @@ The database is kept in the `db-data` volume, and logs in `web-logs` and `web-de
 > Keep MySQL reachable from localhost only.
 
 ### 2. Fesl login server
+
+> [!TIP]
+> The open-source [`fesl_server/`](fesl_server/README.md#running-the-fesl-server) can already log players in from the same `account` table (it takes the same `-dbhost`, `-dbname`, `-dbuser`, `-dbpass` options and runs on Linux). It doesn't handle GameSpy or the requests after Login yet, so keep using `fesl_login_server.exe` below for now.
 
 1. Install **Win32 OpenSSL v1.0.2u**.
 2. Copy `libmySQL.dll` (from your MySQL install or the MySQL C Connector) into `fesl_login_server/`.

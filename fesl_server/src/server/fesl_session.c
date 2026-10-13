@@ -149,7 +149,7 @@ static void make_lkey(fesl_session *s) {
 
 static int handle_login(fesl_session *s, const fesl_packet *req, fesl_output *out) {
     answer              a = { .len = 0 };
-    const fesl_account  *acc;
+    const fesl_account  *acc = &s->account_data;
     const char          *name,
                         *password,
                         *encrypted;
@@ -171,10 +171,15 @@ static int handle_login(fesl_session *s, const fesl_packet *req, fesl_output *ou
         s->failed_logins++;
         return reply_field_error(out, req, FESL_ERROR_USER_NOT_FOUND, "The user was not found", "name");
     }
-    acc = fesl_accounts_find(s->accounts, name);
-    if(!acc) {
-        s->failed_logins++;
-        return reply_error(out, req, FESL_ERROR_USER_NOT_FOUND, "The user was not found");
+    switch(s->accounts->find(s->accounts, name, &s->account_data)) {
+        case FESL_ACCOUNT_FOUND:
+            break;
+        case FESL_ACCOUNT_NOT_FOUND:
+            s->failed_logins++;
+            return reply_error(out, req, FESL_ERROR_USER_NOT_FOUND, "The user was not found");
+        default:
+            // not the player's fault, so not counted as a failed attempt
+            return reply_error(out, req, FESL_ERROR_SYSTEM, "The account service is unavailable, try again later");
     }
     if(!password || strcmp(password, acc->password)) {
         s->failed_logins++;
@@ -227,7 +232,7 @@ static int handle_object_inventory(const fesl_packet *req, fesl_output *out) {
     return reply(out, req, &a);
 }
 
-void fesl_session_init(fesl_session *s, const fesl_accounts *accounts, uint32_t (*random)(void *), void *random_ctx) {
+void fesl_session_init(fesl_session *s, fesl_account_store *accounts, uint32_t (*random)(void *), void *random_ctx) {
     memset(s, 0, sizeof(fesl_session));
     s->accounts   = accounts;
     s->random     = random;

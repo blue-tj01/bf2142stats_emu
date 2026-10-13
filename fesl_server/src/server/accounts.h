@@ -1,5 +1,5 @@
 /*
-    Accounts file, a stand-in until database support exists
+    Account lookup: the accounts file, or the database (accounts_db.h)
 
     This program is free software; you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -18,7 +18,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define ACCOUNT_NAME_SIZE       32
+#define ACCOUNT_NAME_SIZE       45      // varchar(45) in the database
 #define ACCOUNT_PASSWORD_SIZE   64
 
 typedef enum {
@@ -51,5 +51,25 @@ int fesl_accounts_load(fesl_accounts *a, const char *path);
 const fesl_account *fesl_accounts_find(const fesl_accounts *a, const char *name);
 
 void fesl_accounts_free(fesl_accounts *a);
+
+// Where the session looks accounts up: the accounts file or the database.
+typedef struct fesl_account_store fesl_account_store;
+
+enum {
+    FESL_ACCOUNT_FOUND     = 1,
+    FESL_ACCOUNT_NOT_FOUND = 0,
+    FESL_ACCOUNT_ERROR     = -1     // the store can't be reached
+};
+
+struct fesl_account_store {
+    // fills out on FESL_ACCOUNT_FOUND, names are case-insensitive
+    int         (*find)(fesl_account_store *store, const char *name, fesl_account *out);
+    // called by each connection thread before it exits, may be NULL
+    void        (*thread_end)(fesl_account_store *store);
+    void        *ctx;
+};
+
+// A store backed by a parsed accounts file, which must outlive it.
+void fesl_accounts_store_init(fesl_account_store *store, const fesl_accounts *a);
 
 #endif

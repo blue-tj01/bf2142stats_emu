@@ -31,7 +31,8 @@ This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj0
 - [x] FESL server: Hello, MemCheck, Login, GetObjectInventory and keep-alive Ping
 - [ ] FESL entitlements, sub-accounts and GameSpy pre-auth
 - [ ] GameSpy protocols and sub-accounts
-- [ ] Database backends (MySQL, PostgreSQL, SQLite3)
+- [x] Accounts from the `account` table of the stats database (MySQL / MariaDB)
+- [ ] Other database backends (PostgreSQL, SQLite3)
 - [ ] Daemonization of each service
 - [ ] INI configuration (minIni is already included)
 
@@ -39,7 +40,7 @@ This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj0
 
 | Path | Contents |
 | --- | --- |
-| `src/server/` | FESL server (`fesl_server.c`), session handlers (`fesl_session.c`), packet decoder/encoder (`fesl.c`) and accounts file (`accounts.c`) |
+| `src/server/` | FESL server (`fesl_server.c`), session handlers (`fesl_session.c`), packet decoder/encoder (`fesl.c`), accounts file (`accounts.c`) and `account` table (`accounts_db.c`) |
 | `src/` | [stcppipe](http://aluigi.altervista.org/mytoolz.htm) capture proxy by Luigi Auriemma, and the minIni INI parser |
 | `tests/` | Decoder and session tests that replay the captures, and a server end-to-end test |
 | `stuff/pcap/` | Captured login sessions (`dump1.pcap` raw, `dump2_ssl.pcap` decrypted FESL) |
@@ -48,7 +49,7 @@ This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj0
 
 ## Getting started
 
-You need a C compiler, `make`, and `unzip`. Building stcppipe against the system OpenSSL also needs the OpenSSL headers (`libssl-dev` on Debian/Ubuntu).
+You need a C compiler, `make`, and `unzip`. Building stcppipe against the system OpenSSL also needs the OpenSSL headers (`libssl-dev` on Debian/Ubuntu). For database support the server also needs the MySQL or MariaDB client library (`libmariadb-dev` or `libmysqlclient-dev`); without it, it builds with the accounts file only.
 
 Run the tests:
 
@@ -60,7 +61,14 @@ make -C src/server               # server end-to-end test, needs Python 3 and op
 cd tests && python3 test_server.py
 ```
 
-CI runs all of these, plus the stcppipe build, on every pull request and on every push to `master`.
+To include the `account` table, point the end-to-end test at a database loaded with [`database/bf2142.sql`](../database/bf2142.sql). It adds two test accounts and removes them again:
+
+```sh
+FESL_DB_NAME=bf2142 FESL_DB_USER=fesl FESL_DB_PASS=... \
+DB_CMD="mysql -h127.0.0.1 -uroot -p... bf2142" python3 test_server.py
+```
+
+CI runs all of these on every pull request and on every push to `master`, against MariaDB 10.11 and MySQL 8.0, plus the stcppipe build.
 
 ## Running the FESL server
 
@@ -73,10 +81,24 @@ openssl req -x509 -newkey rsa:1024 -nodes -days 365 -subj /CN=fesl -keyout cert.
 ./fesl_server -c cert.pem -a accounts.example.txt     # listens on port 18300
 ```
 
+To use the accounts of the stats database instead, the same `account` table `fesl_login_server.exe` uses, pass the database options it takes:
+
+```sh
+FESL_DB_PASS=yourpassword ./fesl_server -c cert.pem -dbhost 127.0.0.1 -dbname bf2142 -dbuser fesl
+```
+
+The server only reads the table, so give it a user with `SELECT` rights only:
+
+```sql
+CREATE USER 'fesl'@'localhost' IDENTIFIED BY 'yourpassword';
+GRANT SELECT ON bf2142.* TO 'fesl'@'localhost';
+```
+
 | Option | Meaning |
 | --- | --- |
 | `-c CERT` | PEM file with the certificate and its passwordless private key (not needed with `-X none`) |
 | `-a ACCOUNTS` | Accounts file, one `name password user_id [status]` per line (see `accounts.example.txt`) |
+| `-dbhost`, `-dbport`, `-dbname`, `-dbuser`, `-dbpass` | Read accounts from the `account` table instead (host default `127.0.0.1`). The password can also come from the `FESL_DB_PASS` environment variable, which keeps it out of the process list |
 | `-p PORT` / `-b IP` | Listening port (default 18300) and address |
 | `-X METHOD` | `ssl3` (default), `tls`, or `none` for plain TCP with a client patched to skip SSL. A plain `make` build has no SSLv3 |
 | `-i SECONDS` | Interval between server Pings, sent even while the client is busy (default 30) |
@@ -84,7 +106,7 @@ openssl req -x509 -newkey rsa:1024 -nodes -days 365 -subj /CN=fesl -keyout cert.
 The server answers:
 
 - **Hello**, followed by an unsolicited MemCheck with packet number 0.
-- **Login**, checked against the accounts file.
+- **Login**, checked against the accounts file or the `account` table. With the database, `profileId` and `userId` are the account's `profileid`, and `displayName` is the name as stored.
 - **GetObjectInventory**, always with an empty inventory.
 
 It also sends a Ping every 30 seconds and closes connections that stay silent for 3 intervals. Any other request gets a "Not implemented" error (`errorCode=99`).
@@ -94,15 +116,17 @@ Login errors:
 | Code | Meaning |
 | --- | --- |
 | 101 | Unknown user. Sent with `errorContainer` field `name` when the name is empty |
+| 99 | The database can't be reached. The server reconnects on the next Login, and this doesn't count as a failed attempt |
 | 122 | Wrong or missing password, with `errorContainer` field `password` |
-| 102 / 103 / 105 | Account `disabled` / `banned` / `pending` (the optional status column; only revealed after the right password) |
+| 102 / 103 / 105 | Account `disabled` / `banned` / `pending` (the optional status column of the accounts file; only revealed after the right password). The `account` table has no status, so database accounts are always active |
 | 121 | Too many attempts: after 5 failed Logins on one connection |
 
 > [!NOTE]
-> - The accounts file stores passwords in clear text. It's a stand-in until database support exists.
+> - Passwords are stored in clear text, both in the accounts file and in the `account` table (as `fesl_login_server.exe` expects). Don't reuse real passwords.
+> - The name is passed to the database as a query parameter, never pasted into the SQL.
 > - Codes 101 and 122 are used by the BFBC2 and NFS Carbon emulators, and the others were checked against the NFS Carbon client. None has been checked against BF2142.
 > - The MemCheck numbering and the fixed 30-second Ping follow EA's real NFS Carbon servers. Our BF2142 captures, made against an emulator, reused the Hello number for MemCheck.
-> - The game may reject a self-signed certificate. That hasn't been tested yet.
+> - An unpatched game rejects the self-signed certificate. The patched executables in [`cracked_exe/`](../cracked_exe) and the [`exe_patch/`](../exe_patch) patches remove that check.
 
 ## Capturing game traffic
 
