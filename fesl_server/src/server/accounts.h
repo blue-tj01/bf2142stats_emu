@@ -20,6 +20,9 @@
 
 #define ACCOUNT_NAME_SIZE       45      // varchar(45) in the database
 #define ACCOUNT_PASSWORD_SIZE   64
+#define ACCOUNT_EMAIL_SIZE      45
+#define ACCOUNT_COUNTRY_SIZE    3
+#define ACCOUNT_ZIP_SIZE        45
 
 typedef enum {
     ACCOUNT_ACTIVE = 0,
@@ -33,6 +36,16 @@ typedef struct {
     char        password[ACCOUNT_PASSWORD_SIZE + 1];
     uint32_t    user_id;
     fesl_account_status status;
+
+    // profile for GetAccount, only the database has it (empty or 0 otherwise)
+    char        email[ACCOUNT_EMAIL_SIZE + 1];
+    char        country[ACCOUNT_COUNTRY_SIZE + 1];
+    unsigned int dob_year,
+                dob_month,
+                dob_day;
+    char        zip_code[ACCOUNT_ZIP_SIZE + 1];
+    unsigned int ea_mail_flag,
+                third_party_mail_flag;
 } fesl_account;
 
 typedef struct {

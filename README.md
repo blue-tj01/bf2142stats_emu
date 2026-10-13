@@ -44,7 +44,7 @@ flowchart LR
 ```
 
 - **Fesl login server** (`fesl_login_server/`) handles accounts and logins in place of EA's FESL and GameSpy services.
-- **Open FESL server** (`fesl_server/`) is an open-source replacement for the closed login server, still in development. It handles FESL Hello, Login and GetObjectInventory so far, with accounts from the same `account` table, but not GameSpy yet. See its [README](fesl_server/README.md).
+- **Open FESL server** (`fesl_server/`) is an open-source replacement for the closed login server, still in development. It handles FESL Hello, Login, GetAccount and GetObjectInventory so far, with accounts from the same `account` table, but not GameSpy yet. See its [README](fesl_server/README.md).
 - **Web stats server** (`web/`) answers the game's stats requests (`getplayerinfo.aspx`, `getleaderboard.aspx`, …) and receives round results from game servers (`bf2142statistics.php`).
 - **Game server Python scripts** (`python/`) collect each player's stats during a round and send them to the web server when it ends.
 - The game client and game server are pointed at your server through a patched executable or the Windows hosts file.
