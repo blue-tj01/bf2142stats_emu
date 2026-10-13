@@ -131,7 +131,7 @@ The database is kept in the `db-data` volume, and logs in `web-logs` and `web-de
 ### 2. Fesl login server
 
 > [!TIP]
-> The open-source [`fesl_server/`](fesl_server/README.md#running-the-fesl-server) can already log players and their soldiers in from the same database (it takes the same `-dbhost`, `-dbname`, `-dbuser`, `-dbpass` options and runs on Linux), and saves the GameSpy pre-auth where `fesl_login_server.exe`'s GameSpy login reads it. It doesn't create accounts or soldiers and has no GameSpy service yet, so keep using `fesl_login_server.exe` below for now.
+> The open-source [`fesl_server/`](fesl_server/README.md#running-the-fesl-server) can already log players and their soldiers in from the same database (it takes the same `-dbhost`, `-dbname`, `-dbuser`, `-dbpass` options and runs on Linux), and saves the GameSpy pre-auth where `fesl_login_server.exe`'s GameSpy login reads it. It can create accounts and soldiers too, but soldiers it creates don't get a GameSpy player row yet, and it has no GameSpy service of its own, so keep using `fesl_login_server.exe` below for now.
 
 1. Install **Win32 OpenSSL v1.0.2u**.
 2. Copy `libmySQL.dll` (from your MySQL install or the MySQL C Connector) into `fesl_login_server/`.

@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <strings.h>
 #include <stdarg.h>
 #include "fesl_session.h"
@@ -102,8 +103,10 @@ static int reply(fesl_output *out, const fesl_packet *req, const answer *a) {
     return output_append(out, req->command, FESL_TYPE_SINGLE_SERVER, req->number, a);
 }
 
-// field names the request field that caused the error, or NULL
-static int reply_field_error(fesl_output *out, const fesl_packet *req, int code, const char *message, const char *field) {
+// field names the request field that caused the error, or NULL; its
+// fieldError is field_error
+static int reply_field_reason(fesl_output *out, const fesl_packet *req, int code, const char *message,
+        const char *field, int field_error) {
     answer  a = { .len = 0 };
 
     add(&a, "TXN", "%s", fesl_txn(req) ? fesl_txn(req) : "");
@@ -111,12 +114,17 @@ static int reply_field_error(fesl_output *out, const fesl_packet *req, int code,
     if(field) {
         add(&a, "errorContainer.[]", "1");
         add(&a, "errorContainer.0.fieldName", "%s", field);
-        add(&a, "errorContainer.0.fieldError", "%d", code);
+        add(&a, "errorContainer.0.fieldError", "%d", field_error);
     } else {
         add(&a, "errorContainer.[]", "0");
     }
     add(&a, "errorCode", "%d", code);
     return reply(out, req, &a);
+}
+
+// as captured from other games: the fieldError of a login error is its code
+static int reply_field_error(fesl_output *out, const fesl_packet *req, int code, const char *message, const char *field) {
+    return reply_field_reason(out, req, code, message, field, code);
 }
 
 static int reply_error(fesl_output *out, const fesl_packet *req, int code, const char *message) {
@@ -363,6 +371,220 @@ static int handle_gamespy_preauth(fesl_session *s, const fesl_packet *req, fesl_
     return reply(out, req, &a);
 }
 
+// a bad field of AddAccount or AddSubAccount
+typedef struct {
+    const char  *field;     // BF2142's name of the field, as listed by openspy
+    int         reason;     // FESL_FIELD_*
+} field_problem;
+
+static int name_char(int c) {
+    return ((c >= 'A') && (c <= 'Z')) || ((c >= 'a') && (c <= 'z')) || ((c >= '0') && (c <= '9')) ||
+           (c == '_') || (c == '-') || (c == '.') || (c == '[') || (c == ']');
+}
+
+// account and soldier names become GameSpy nicks too, which can't contain
+// '\\', so only a safe set of characters is allowed in new names
+static int check_name(const char *name, size_t max) {
+    size_t  len = name ? strlen(name) : 0,
+            i;
+
+    if(!len) return FESL_FIELD_REQUIRED;
+    if(len < 3) return FESL_FIELD_TOO_SHORT;
+    if(len > max) return FESL_FIELD_TOO_LONG;
+    if(!(((name[0] >= 'A') && (name[0] <= 'Z')) || ((name[0] >= 'a') && (name[0] <= 'z')))) return FESL_FIELD_START_LETTER;
+    for(i = 0; i < len; i++) {
+        if(!name_char((unsigned char)name[i])) return FESL_FIELD_INVALID;
+    }
+    return 0;
+}
+
+static int is_leap(unsigned int y) {
+    return ((y % 4) == 0) && (((y % 100) != 0) || ((y % 400) == 0));
+}
+
+static int parse_uint(const char *s, unsigned int max, unsigned int *out) {
+    char            *end;
+    unsigned long   n;
+
+    if(!s || !*s || (*s == '-') || (*s == '+')) return -1;
+    n = strtoul(s, &end, 10);
+    if(*end || (n > max)) return -1;
+    *out = n;
+    return 0;
+}
+
+// fills acc from an AddAccount request, or returns the first bad field
+static int read_new_account(const fesl_packet *req, fesl_account *acc, field_problem *bad) {
+    static const unsigned char days[] = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    const char  *name = fesl_get(req, "name"),
+                *password = fesl_get(req, "password"),
+                *email = fesl_get(req, "email"),
+                *country = fesl_get(req, "countryCode"),
+                *zip = fesl_get(req, "zipCode"),
+                *flag,
+                *at;
+    size_t      i,
+                len;
+    int         reason;
+
+    memset(acc, 0, sizeof(fesl_account));
+    if((reason = check_name(name, ACCOUNT_NAME_SIZE))) {
+        bad->field  = "Account.ScreenName";
+        bad->reason = reason;
+        return -1;
+    }
+
+    // "The password must contain only alphabetic and numeric characters, and
+    // must be between four and sixteen characters long"
+    len = password ? strlen(password) : 0;
+    bad->field = "Account.Password";
+    if(!len) return bad->reason = FESL_FIELD_REQUIRED, -1;
+    if(len < 4) return bad->reason = FESL_FIELD_TOO_SHORT, -1;
+    if(len > 16) return bad->reason = FESL_FIELD_TOO_LONG, -1;
+    for(i = 0; i < len; i++) {
+        if(!isalnum((unsigned char)password[i])) return bad->reason = FESL_FIELD_INVALID, -1;
+    }
+
+    len = email ? strlen(email) : 0;
+    bad->field = "Account.EmailAddress";
+    if(!len) return bad->reason = FESL_FIELD_REQUIRED, -1;
+    if(len > ACCOUNT_EMAIL_SIZE) return bad->reason = FESL_FIELD_TOO_LONG, -1;
+    at = strchr(email, '@');
+    if(!at || (at == email) || strchr(at + 1, '@') || !strchr(at + 1, '.') || (email[len - 1] == '.')) {
+        return bad->reason = FESL_FIELD_INVALID, -1;
+    }
+    for(i = 0; i < len; i++) {
+        if(((unsigned char)email[i] <= ' ') || strchr("\\\"'%<>", email[i])) return bad->reason = FESL_FIELD_INVALID, -1;
+    }
+
+    len = country ? strlen(country) : 0;
+    bad->field = "Account.Address.Country";
+    if(!len) return bad->reason = FESL_FIELD_REQUIRED, -1;
+    if(len > ACCOUNT_COUNTRY_SIZE) return bad->reason = FESL_FIELD_TOO_LONG, -1;
+    for(i = 0; i < len; i++) {
+        if(!isalnum((unsigned char)country[i])) return bad->reason = FESL_FIELD_INVALID, -1;
+    }
+
+    bad->field = "Account.BirthDate";
+    if(parse_uint(fesl_get(req, "DOBYear"), 2100, &acc->dob_year) || (acc->dob_year < 1900) ||
+       parse_uint(fesl_get(req, "DOBMonth"), 12, &acc->dob_month) || !acc->dob_month ||
+       parse_uint(fesl_get(req, "DOBDay"), 31, &acc->dob_day) || !acc->dob_day ||
+       (acc->dob_day > (unsigned int)(days[acc->dob_month - 1] + ((acc->dob_month == 2) && is_leap(acc->dob_year))))) {
+        return bad->reason = FESL_FIELD_INVALID, -1;
+    }
+
+    len = zip ? strlen(zip) : 0;
+    bad->field = "Account.Address.Zip";
+    if(len > ACCOUNT_ZIP_SIZE) return bad->reason = FESL_FIELD_TOO_LONG, -1;
+    for(i = 0; i < len; i++) {
+        if(((unsigned char)zip[i] < ' ') || (zip[i] == '\\')) return bad->reason = FESL_FIELD_INVALID, -1;
+    }
+
+    strcpy(acc->name, name);
+    strcpy(acc->password, password);
+    strcpy(acc->email, email);
+    strcpy(acc->country, country);
+    if(zip) strcpy(acc->zip_code, zip);
+    flag = fesl_get(req, "eaMailFlag");
+    acc->ea_mail_flag = flag && !strcmp(flag, "1");
+    flag = fesl_get(req, "thirdPartyMailFlag");
+    acc->third_party_mail_flag = flag && !strcmp(flag, "1");
+    acc->status = ACCOUNT_ACTIVE;
+    return 0;
+}
+
+static int reply_cannot_create(fesl_output *out, const fesl_packet *req) {
+    return reply_error(out, req, FESL_ERROR_SYSTEM, "Accounts and soldiers can only be created with the database");
+}
+
+// after Hello, before or instead of Login; the game logs in afterwards
+static int handle_add_account(fesl_session *s, const fesl_packet *req, fesl_output *out) {
+    answer          a = { .len = 0 };
+    fesl_account    acc;
+    field_problem   bad;
+    uint32_t        id = 0;
+
+    if(!s->hello_done) return reply_error(out, req, FESL_ERROR_SYSTEM, "Hello expected");
+    if(!s->accounts->add_account) return reply_cannot_create(out, req);
+    if(read_new_account(req, &acc, &bad) < 0) {
+        return reply_field_reason(out, req, FESL_ERROR_FIELD, "The required parameters for this call are missing or invalid",
+            bad.field, bad.reason);
+    }
+    switch(s->accounts->add_account(s->accounts, &acc, &id)) {
+        case FESL_ACCOUNT_FOUND:
+            break;
+        case FESL_ACCOUNT_EXISTS:
+            return reply_error(out, req, FESL_ERROR_NAME_TAKEN, "That account name is already taken");
+        default:
+            return reply_store_error(out, req);
+    }
+    add(&a, "TXN", "AddAccount");
+    add(&a, "userId", "%u", id);
+    add(&a, "profileId", "%u", id);
+    return reply(out, req, &a);
+}
+
+static int handle_add_sub_account(fesl_session *s, const fesl_packet *req, fesl_output *out) {
+    answer              a = { .len = 0 };
+    fesl_sub_account    sub;
+    const char          *name = fesl_get(req, "name");
+    int                 reason;
+
+    if(!s->account) return reply_error(out, req, FESL_ERROR_SYSTEM, "Login required");
+    if(!s->accounts->add_sub_account) return reply_cannot_create(out, req);
+    if((reason = check_name(name, FESL_SOLDIER_NAME_SIZE))) {
+        return reply_field_reason(out, req, FESL_ERROR_FIELD, "The required parameters for this call are missing or invalid",
+            "Account.ScreenName", reason);
+    }
+    switch(s->accounts->add_sub_account(s->accounts, s->account, name, FESL_MAX_SOLDIERS, &sub)) {
+        case FESL_ACCOUNT_FOUND:
+            break;
+        case FESL_ACCOUNT_EXISTS:
+            return reply_error(out, req, FESL_ERROR_NAME_TAKEN, "That account name is already taken");
+        case FESL_ACCOUNT_LIMIT:
+            return reply_error(out, req, FESL_ERROR_TOO_MANY_SOLDIERS,
+                "You can only have four (4) active Soldiers at the same time. If you want to create a new Soldier, you need to delete an existing one first.");
+        default:
+            return reply_store_error(out, req);
+    }
+    // success as openspy, which works with BF2142, answers it: "no error"
+    add(&a, "TXN", "AddSubAccount");
+    add(&a, "errorContainer.[]", "0");
+    add(&a, "errorCode", "%d", FESL_ERROR_NONE);
+    return reply(out, req, &a);
+}
+
+static int handle_disable_sub_account(fesl_session *s, const fesl_packet *req, fesl_output *out) {
+    answer              a = { .len = 0 };
+    fesl_sub_account    list[FESL_MAX_SUB_ACCOUNTS];
+    const char          *name = fesl_get(req, "name");
+    size_t              count,
+                        i;
+
+    if(!s->account) return reply_error(out, req, FESL_ERROR_SYSTEM, "Login required");
+    if(!s->accounts->remove_sub_account) return reply_cannot_create(out, req);
+    if(s->accounts->sub_accounts(s->accounts, s->account, list, FESL_MAX_SUB_ACCOUNTS, &count) != FESL_ACCOUNT_FOUND) {
+        return reply_store_error(out, req);
+    }
+    for(i = 0; i < count; i++) {
+        if(name && !strcasecmp(name, list[i].name)) break;
+    }
+    if(i == count) return reply_field_error(out, req, FESL_ERROR_USER_NOT_FOUND, "The user was not found", "name");
+
+    switch(s->accounts->remove_sub_account(s->accounts, s->account, &list[i])) {
+        case FESL_ACCOUNT_FOUND:
+            break;
+        case FESL_ACCOUNT_NOT_FOUND:     // removed meanwhile
+            return reply_field_error(out, req, FESL_ERROR_USER_NOT_FOUND, "The user was not found", "name");
+        default:
+            return reply_store_error(out, req);
+    }
+    if(s->sub_account && (s->sub_account->id == list[i].id)) s->sub_account = NULL;
+
+    add(&a, "TXN", "DisableSubAccount");
+    return reply(out, req, &a);
+}
+
 // BF2142 asks for the booster pack (objectIds.0=bf2142_bp1); both the
 // captured server and EA's NFS Carbon server answered with no entitlements
 static int handle_object_inventory(const fesl_packet *req, fesl_output *out) {
@@ -398,6 +620,9 @@ int fesl_session_handle(fesl_session *s, const fesl_packet *req, time_t now, fes
         if(!strcmp(txn, "GetSubAccounts")) return handle_get_sub_accounts(s, req, out);
         if(!strcmp(txn, "LoginSubAccount")) return handle_login_sub_account(s, req, out);
         if(!strcmp(txn, "GameSpyPreAuth")) return handle_gamespy_preauth(s, req, out);
+        if(!strcmp(txn, "AddAccount")) return handle_add_account(s, req, out);
+        if(!strcmp(txn, "AddSubAccount")) return handle_add_sub_account(s, req, out);
+        if(!strcmp(txn, "DisableSubAccount")) return handle_disable_sub_account(s, req, out);
     } else if(!strcmp(req->command, "subs")) {
         if(!strcmp(txn, "GetEntitlementByBundle")) return handle_entitlement_by_bundle(s, req, out);
     }

@@ -256,6 +256,7 @@ def main():
 
 
 TEST_ACCOUNTS = ("Tema567", "fesl_test_other")
+NEW_ACCOUNT = "fesl_test_new"       # created by the test through AddAccount
 
 
 def sql(query):
@@ -267,7 +268,15 @@ def sql(query):
 
 
 def run_db(cert, log):
-    names = ",".join("'%s'" % n for n in TEST_ACCOUNTS)
+    names = ",".join("'%s'" % n for n in TEST_ACCOUNTS + (NEW_ACCOUNT,))
+
+    def remove_new_account():
+        for row in sql("SELECT profileid FROM account WHERE account = '%s'" % NEW_ACCOUNT):
+            for sub in sql("SELECT id FROM subaccount WHERE profileid = %s" % row[0]):
+                sql("DELETE FROM gamespy_players WHERE id = %s" % sub[0])
+            sql("DELETE FROM subaccount WHERE profileid = %s" % row[0])
+
+    remove_new_account()
     sql("DELETE FROM account WHERE account IN (%s)" % names)
     # Tema567 gets the profile of the captured GetAccount; the other account
     # has no zip code (NULL) and a newline in its e-mail
@@ -362,6 +371,66 @@ def run_db(cert, log):
         check(subs == {"TXN": "GetSubAccounts", "subAccounts.[]": "0"}, "no soldiers: %r" % subs)
         check(sub.get("errorCode") == "101", "another account's soldier: %r" % sub)
 
+        # AddAccount creates the row, then the account can log in and get soldiers
+        c = Client(port, use_ssl)
+        c.send("fsys", 0x80000001, HELLO)
+        c.recv()
+        c.recv()
+        new_account = ("TXN=AddAccount\nname=%s\npassword=newpass1\nemail=new@example.com\ncountryCode=DE\n"
+                       "zipCode=10115\nDOBDay=3\nDOBMonth=4\nDOBYear=1985\neaMailFlag=0\nthirdPartyMailFlag=1\n")
+        c.send("acct", 0x80000002, new_account % NEW_ACCOUNT)
+        added = c.recv()[2]
+        c.send("acct", 0x80000003, new_account % NEW_ACCOUNT.upper())
+        again = c.recv()[2]
+        c.send("acct", 0x80000004, (new_account % "fesl_test_bad").replace("newpass1", "x"))
+        bad = c.recv()[2]
+        c.close()
+        row = sql("SELECT profileid, account, password, email, countryCode, DOBYear, DOBMonth, DOBDay, zipCode, "
+                  "eaMailFlag, thirdPartyMailFlag FROM account WHERE account = '%s'" % NEW_ACCOUNT)
+        check(len(row) == 1 and row[0][1:] == [NEW_ACCOUNT, "newpass1", "new@example.com", "DE", "1985", "4", "3",
+                                               "10115", "0", "1"], "created account row: %r" % row)
+        new_id = row[0][0] if row else "?"
+        check(added == {"TXN": "AddAccount", "userId": new_id, "profileId": new_id}, "AddAccount: %r" % added)
+        check(again.get("errorCode") == "160", "AddAccount of a taken name: %r" % again)
+        check(bad.get("errorCode") == "21" and bad.get("errorContainer.0.fieldName") == "Account.Password",
+              "AddAccount with a bad password: %r" % bad)
+        check(not sql("SELECT 1 FROM account WHERE account = 'fesl_test_bad'"), "no row for a refused account")
+
+        c, new_login = logged_in(port, use_ssl, NEW_ACCOUNT, "newpass1")
+        check(new_login.get("userId") == new_id, "login of the new account: %r" % new_login)
+        answers = []
+        for n, name in enumerate(("FtSoldierA", "FtSoldierB", "FtSoldierC", "FtSoldierD", "FtSoldierE")):
+            c.send("acct", 0x80000010 + n, "TXN=AddSubAccount\nname=%s\n" % name)
+            answers.append(c.recv()[2].get("errorCode"))
+        c.send("acct", 0x80000020, "TXN=AddSubAccount\nname=tema567\n")      # Tema567's soldier and GameSpy nick
+        taken = c.recv()[2]
+        check(answers == ["182"] * 4 + ["163"], "AddSubAccount up to four: %r" % answers)
+        check(taken.get("errorCode") == "160", "AddSubAccount of a taken name: %r" % taken)
+        soldiers = sql("SELECT id, subaccount FROM subaccount WHERE profileid = %s ORDER BY id" % new_id)
+        check([s[1] for s in soldiers] == ["FtSoldierA", "FtSoldierB", "FtSoldierC", "FtSoldierD"],
+              "created soldiers: %r" % soldiers)
+
+        # DisableSubAccount removes the soldier and its GameSpy player
+        if soldiers:
+            sql("INSERT INTO gamespy_players (id, email, password, passwordenc, nick) "
+                "VALUES (%s, 'new@example.com', 'newpass1', 'x', 'FtSoldierA')" % soldiers[0][0])
+        c.send("acct", 0x80000021, "TXN=DisableSubAccount\nname=ftsoldiera\n")
+        disabled = c.recv()[2]
+        c.send("acct", 0x80000022, "TXN=DisableSubAccount\nname=Tema567\n")     # not this account's
+        foreign = c.recv()[2]
+        c.send("acct", 0x80000023, "TXN=GetSubAccounts\n")
+        subs = c.recv()[2]
+        c.close()
+        check(disabled == {"TXN": "DisableSubAccount"}, "DisableSubAccount: %r" % disabled)
+        check(foreign.get("errorCode") == "101", "DisableSubAccount of another account's soldier: %r" % foreign)
+        check(subs.get("subAccounts.[]") == "3" and "FtSoldierA" not in subs.values(), "after disabling: %r" % subs)
+        if soldiers:
+            check(not sql("SELECT 1 FROM subaccount WHERE id = %s" % soldiers[0][0])
+                  and not sql("SELECT 1 FROM gamespy_players WHERE id = %s" % soldiers[0][0]),
+                  "disabled soldier's rows removed")
+        check(sql("SELECT COUNT(*) FROM subaccount WHERE subaccount = 'Tema567'") == [["1"]],
+              "the other account's soldier is untouched")
+
         # the name is a query parameter, so SQL in it is just a wrong name
         for name in ("x' OR '1'='1", "Tema567' -- ", "Tema567\\", "A" * 46):
             answer = login(port, use_ssl, name, "123456")
@@ -386,6 +455,7 @@ def run_db(cert, log):
         check("no gamespy_players row with id %s" % second_id in text, "missing GameSpy player logged")
         return text
     finally:
+        remove_new_account()
         sql("DELETE FROM gamespy_players WHERE id IN (%s, %s)" % (sub_id, second_id))
         sql("DELETE FROM subaccount WHERE profileid IN (%s, %s)" % (user_id, other_id))
         sql("DELETE FROM account WHERE account IN (%s)" % names)

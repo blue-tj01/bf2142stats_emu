@@ -78,9 +78,11 @@ typedef struct {
 typedef struct fesl_account_store fesl_account_store;
 
 enum {
-    FESL_ACCOUNT_FOUND     = 1,
+    FESL_ACCOUNT_FOUND     = 1,     // also: created, removed
     FESL_ACCOUNT_NOT_FOUND = 0,
-    FESL_ACCOUNT_ERROR     = -1     // the store can't be reached
+    FESL_ACCOUNT_ERROR     = -1,    // the store can't be reached
+    FESL_ACCOUNT_EXISTS    = 2,     // the name is taken
+    FESL_ACCOUNT_LIMIT     = 3      // the account has the most sub-accounts allowed
 };
 
 struct fesl_account_store {
@@ -95,6 +97,18 @@ struct fesl_account_store {
     // GameSpy player to save it to, or FESL_ACCOUNT_ERROR
     int         (*save_preauth)(fesl_account_store *store, const fesl_sub_account *sub,
                     const char *challenge, const char *ticket);
+    // creating and removing, NULL when the store can't (the accounts file).
+    // add_account sets *id to the new account's id: FESL_ACCOUNT_FOUND,
+    // FESL_ACCOUNT_EXISTS or FESL_ACCOUNT_ERROR
+    int         (*add_account)(fesl_account_store *store, const fesl_account *acc, uint32_t *id);
+    // a sub-account of acc, names are unique among all sub-accounts and
+    // GameSpy players: FESL_ACCOUNT_FOUND (out filled), FESL_ACCOUNT_EXISTS,
+    // FESL_ACCOUNT_LIMIT when acc already has max, or FESL_ACCOUNT_ERROR
+    int         (*add_sub_account)(fesl_account_store *store, const fesl_account *acc, const char *name,
+                    size_t max, fesl_sub_account *out);
+    // removes a sub-account of acc and its GameSpy player: FESL_ACCOUNT_FOUND,
+    // FESL_ACCOUNT_NOT_FOUND or FESL_ACCOUNT_ERROR
+    int         (*remove_sub_account)(fesl_account_store *store, const fesl_account *acc, const fesl_sub_account *sub);
     // called by each connection thread before it exits, may be NULL
     void        (*thread_end)(fesl_account_store *store);
     void        *ctx;
