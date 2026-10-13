@@ -2,3 +2,6 @@
 web/*.txt
 web/logs/
 web/include/_ccconfig.php.bak
+
+# Local Docker settings
+.env

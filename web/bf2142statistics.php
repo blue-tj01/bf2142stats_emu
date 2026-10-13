@@ -1472,8 +1472,9 @@ function checkBackendAwards() {
         }
     }
 }
+// The buffer is sent to the game server when the script ends; echoing it
+// here as well sent the whole response twice.
 $string = ob_get_contents();
-echo $string;
 if ($LOG) {
 @file_put_contents("logs/output".time().".txt", $string, FILE_APPEND);
 }
