@@ -102,7 +102,17 @@ def login(port, use_ssl, name, password):
     return answer[2] if answer else {}
 
 
-def run(method, cert, source, log, user_id="10", env=None, extra=None):
+def logged_in(port, use_ssl, name, password):
+    """A client after Hello and Login, with the Login answer."""
+    c = Client(port, use_ssl)
+    c.send("fsys", 0x80000001, HELLO)
+    c.recv()
+    c.recv()
+    c.send("acct", 0x80000002, LOGIN.replace("name=Tema567", "name=" + name).format(password=password))
+    return c, c.recv()[2]
+
+
+def run(method, cert, source, log, user_id="10", sub_id=None, env=None, extra=None):
     use_ssl = method != "none"
     port = free_port()
     args = [SERVER, "-X", method, "-p", str(port), "-i", str(PING_INTERVAL)] + source
@@ -162,10 +172,28 @@ def run(method, cert, source, log, user_id="10", env=None, extra=None):
         check(len(pings) >= 2 and all(g >= PING_INTERVAL * 0.7 for g in gaps),
               "Pings every %ds while busy: %r" % (PING_INTERVAL, pings))
 
-        # not implemented yet
+        # the rest of the captured login: unlock bundle, soldiers, GameSpy pre-auth
         c.send("subs", 0x80000004, "TXN=GetEntitlementByBundle\nbundleId=REG-PC-BF2142-UNLOCK-1\n")
         cmd, word, ent = c.recv()
-        check((cmd, word, ent.get("errorCode")) == ("subs", 0x80000004, "99"), "not implemented error")
+        check((cmd, word, ent.get("errorCode")) == ("subs", 0x80000004, "3012"), "unlock bundle: %r" % ent)
+        c.send("acct", 0x80000009, "TXN=GetSubAccounts\n")
+        cmd, word, subs = c.recv()
+        listed = [k for k in subs if k.startswith("subAccounts.") and k != "subAccounts.[]"]
+        check(word == 0x80000009 and subs.get("subAccounts.0") == "Tema567"
+              and subs.get("subAccounts.[]") == str(len(listed)), "GetSubAccounts: %r" % subs)
+        c.send("acct", 0x8000000a, "TXN=LoginSubAccount\nname=Tema567\n")
+        cmd, word, sub = c.recv()
+        check(word == 0x8000000a and sub.get("profileId") == (sub_id or user_id) and sub.get("userId") == user_id
+              and len(sub.get("lkey", "")) == 28 and sub["lkey"] != login["lkey"], "LoginSubAccount: %r" % sub)
+        c.send("acct", 0x8000000c, "TXN=GameSpyPreAuth\n")
+        cmd, word, preauth = c.recv()
+        check(word == 0x8000000c and len(preauth.get("challenge", "")) == 8
+              and len(preauth.get("ticket", "")) == 90, "GameSpyPreAuth: %r" % preauth)
+
+        # not implemented yet
+        c.send("rank", 0x8000000d, "TXN=GetStats\n")
+        cmd, word, stats = c.recv()
+        check((cmd, word, stats.get("errorCode")) == ("rank", 0x8000000d, "99"), "not implemented error")
 
         # Goodbye closes the connection
         c.send("fsys", 0x80000005, "TXN=Goodbye\nreason=GOODBYE_CLIENT_NORMAL\n")
@@ -194,7 +222,7 @@ def run(method, cert, source, log, user_id="10", env=None, extra=None):
 
     with open(log) as f:
         text = f.read()
-    check("logged in as Tema567" in text, "login logged")
+    check("logged in as Tema567" in text and "playing as Tema567" in text, "login logged")
     check("123456" not in text and "wrong-password" not in text, "passwords not logged")
     return text
 
@@ -250,7 +278,18 @@ def run_db(cert, log):
         "zipCode, eaMailFlag, thirdPartyMailFlag) VALUES ('fesl_test_other', 'other-pass', "
         "CONCAT('a', CHAR(10), 'b@example.com'), 'US', 1990, 12, 31, NULL, 0, 1)")
     user_id = sql("SELECT profileid FROM account WHERE account = 'Tema567'")[0][0]
+    other_id = sql("SELECT profileid FROM account WHERE account = 'fesl_test_other'")[0][0]
     user = os.environ.get("FESL_DB_USER", "")
+
+    # Tema567 has two soldiers, only the first one a GameSpy player; the
+    # other account has none
+    sql("DELETE FROM subaccount WHERE profileid IN (%s, %s)" % (user_id, other_id))
+    sql("INSERT INTO subaccount (profileid, subaccount) VALUES (%s, 'Tema567'), (%s, 'TemaTwo')" % (user_id, user_id))
+    soldiers = sql("SELECT id, subaccount FROM subaccount WHERE profileid = %s ORDER BY id" % user_id)
+    sub_id, second_id = soldiers[0][0], soldiers[1][0]
+    sql("DELETE FROM gamespy_players WHERE id IN (%s, %s)" % (sub_id, second_id))
+    sql("INSERT INTO gamespy_players (id, email, password, passwordenc, nick) "
+        "VALUES (%s, 'tema567@list.ru', '123456', 'x', 'Tema567')" % sub_id)
 
     def db_checks(port, use_ssl):
         # names are matched case-insensitively, the stored spelling is returned
@@ -289,6 +328,40 @@ def run_db(cert, log):
         check(account.get("zipCode") == "" and account.get("email") == "a%0ab@example.com"
               and account.get("dobDay") == "31" and len(account) == 14, "GetAccount, NULL zip: %r" % account)
 
+        # the soldiers come from the subaccount table, in id order
+        c, _ = logged_in(port, use_ssl, "Tema567", "123456")
+        c.send("acct", 0x80000009, "TXN=GetSubAccounts\n")
+        subs = c.recv()[2]
+        check(subs == {"TXN": "GetSubAccounts", "subAccounts.0": "Tema567", "subAccounts.1": "TemaTwo",
+                       "subAccounts.[]": "2"} and list(subs)[-1] == "subAccounts.[]", "GetSubAccounts: %r" % subs)
+
+        # the pre-auth is saved where fesl_login_server.exe's GameSpy login looks
+        c.send("acct", 0x8000000a, "TXN=LoginSubAccount\nname=tema567\n")
+        sub = c.recv()[2]
+        check(sub.get("profileId") == sub_id and sub.get("userId") == user_id, "LoginSubAccount: %r" % sub)
+        c.send("acct", 0x8000000c, "TXN=GameSpyPreAuth\n")
+        preauth = c.recv()[2]
+        row = sql("SELECT challenge, authtoken FROM gamespy_players WHERE id = %s" % sub_id)
+        check(row == [[preauth.get("challenge"), preauth.get("ticket")]], "saved pre-auth %r, answer %r" % (row, preauth))
+
+        # a soldier without a GameSpy player still gets an answer, the log tells
+        c.send("acct", 0x8000000d, "TXN=LoginSubAccount\nname=TemaTwo\n")
+        sub = c.recv()[2]
+        check(sub.get("profileId") == second_id, "second soldier: %r" % sub)
+        c.send("acct", 0x8000000e, "TXN=GameSpyPreAuth\n")
+        preauth = c.recv()[2]
+        check(len(preauth.get("ticket", "")) == 90, "pre-auth without a GameSpy player: %r" % preauth)
+        c.close()
+
+        c, _ = logged_in(port, use_ssl, "fesl_test_other", "other-pass")
+        c.send("acct", 0x80000009, "TXN=GetSubAccounts\n")
+        subs = c.recv()[2]
+        c.send("acct", 0x8000000a, "TXN=LoginSubAccount\nname=Tema567\n")     # not this account's
+        sub = c.recv()[2]
+        c.close()
+        check(subs == {"TXN": "GetSubAccounts", "subAccounts.[]": "0"}, "no soldiers: %r" % subs)
+        check(sub.get("errorCode") == "101", "another account's soldier: %r" % sub)
+
         # the name is a query parameter, so SQL in it is just a wrong name
         for name in ("x' OR '1'='1", "Tema567' -- ", "Tema567\\", "A" * 46):
             answer = login(port, use_ssl, name, "123456")
@@ -309,8 +382,12 @@ def run_db(cert, log):
         source = ["-dbhost", os.environ.get("FESL_DB_HOST", "127.0.0.1"),
                   "-dbport", os.environ.get("FESL_DB_PORT", "3306"),
                   "-dbname", os.environ["FESL_DB_NAME"], "-dbuser", user]
-        return run("tls", cert, source, log, user_id=user_id, env=env, extra=db_checks)
+        text = run("tls", cert, source, log, user_id=user_id, sub_id=sub_id, env=env, extra=db_checks)
+        check("no gamespy_players row with id %s" % second_id in text, "missing GameSpy player logged")
+        return text
     finally:
+        sql("DELETE FROM gamespy_players WHERE id IN (%s, %s)" % (sub_id, second_id))
+        sql("DELETE FROM subaccount WHERE profileid IN (%s, %s)" % (user_id, other_id))
         sql("DELETE FROM account WHERE account IN (%s)" % names)
 
 

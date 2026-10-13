@@ -46,6 +46,12 @@ typedef bool my_bool;
 #define FIND_QUERY  "SELECT profileid, account, password, email, countryCode, DOBYear, DOBMonth, DOBDay, " \
                     "zipCode, eaMailFlag, thirdPartyMailFlag FROM account WHERE account = ? ORDER BY profileid LIMIT 1"
 
+#define SUB_ACCOUNTS_QUERY  "SELECT id, subaccount FROM subaccount WHERE profileid = ? ORDER BY id LIMIT ?"
+
+// read by the GameSpy login of fesl_login_server.exe, which looks the
+// player up by authtoken; gamespy_players.id is the sub-account id
+#define PREAUTH_QUERY       "UPDATE gamespy_players SET challenge = ?, authtoken = ? WHERE id = ?"
+
 enum {  // result columns
     COL_ID, COL_NAME, COL_PASSWORD, COL_EMAIL, COL_COUNTRY, COL_DOB_YEAR, COL_DOB_MONTH,
     COL_DOB_DAY, COL_ZIP, COL_EA_MAIL, COL_THIRD_PARTY_MAIL, COLUMNS
@@ -72,8 +78,9 @@ static int db_connect(db_store *db) {
     mysql_options(db->conn, MYSQL_OPT_READ_TIMEOUT, &timeout);
     mysql_options(db->conn, MYSQL_OPT_WRITE_TIMEOUT, &timeout);
     mysql_options(db->conn, MYSQL_SET_CHARSET_NAME, "latin1");     // the charset of the table
+    // CLIENT_FOUND_ROWS: UPDATE reports the rows it matched, not only the changed ones
     if(!mysql_real_connect(db->conn, db->config.host, db->config.user, db->config.password,
-                           db->config.name, db->config.port, NULL, 0)) {
+                           db->config.name, db->config.port, NULL, CLIENT_FOUND_ROWS)) {
         fprintf(stderr, "database: can't connect to %s: %s\n", db->config.host, mysql_error(db->conn));
         db_disconnect(db);
         return -1;
@@ -93,8 +100,24 @@ static void bind_uint(MYSQL_BIND *b, unsigned int *value) {
     b->buffer      = value;
 }
 
-// FESL_ACCOUNT_ERROR on database errors, the connection is then dropped
-static int db_query(db_store *db, const char *name, fesl_account *out) {
+static void bind_param_string(MYSQL_BIND *b, const char *value, unsigned long *len) {
+    *len = strlen(value);
+    b->buffer_type   = MYSQL_TYPE_STRING;
+    b->buffer        = (char *)value;
+    b->buffer_length = *len;
+    b->length        = len;
+}
+
+typedef struct {
+    const char      *name;
+    fesl_account    *out;
+} find_args;
+
+// the operations return FESL_ACCOUNT_ERROR on database errors, the
+// connection is then dropped and the operation tried once more
+static int op_find(db_store *db, void *arg) {
+    const char      *name = ((find_args *)arg)->name;
+    fesl_account    *out = ((find_args *)arg)->out;
     MYSQL_STMT      *stmt;
     MYSQL_BIND      param,
                     result[COLUMNS];
@@ -169,25 +192,141 @@ quit:
     return ret;
 }
 
-static int db_find(fesl_account_store *store, const char *name, fesl_account *out) {
-    db_store    *db = store->ctx;
-    int         ret = FESL_ACCOUNT_ERROR,
-                attempt;
+typedef struct {
+    const fesl_account *acc;
+    fesl_sub_account *list;
+    unsigned int    max;
+    size_t          *count;
+} sub_accounts_args;
 
-    if(strlen(name) > ACCOUNT_NAME_SIZE) return FESL_ACCOUNT_NOT_FOUND;
+static int op_sub_accounts(db_store *db, void *arg) {
+    sub_accounts_args *args = arg;
+    MYSQL_STMT      *stmt;
+    MYSQL_BIND      param[2],
+                    result[2];
+    unsigned int    profileid = args->acc->user_id,
+                    id;
+    char            name[ACCOUNT_NAME_SIZE + 1];
+    unsigned long   name_len;
+    my_bool         is_null[2];
+    int             ret = FESL_ACCOUNT_ERROR,
+                    fetched;
+
+    *args->count = 0;
+    stmt = mysql_stmt_init(db->conn);
+    if(!stmt) return FESL_ACCOUNT_ERROR;
+    if(mysql_stmt_prepare(stmt, SUB_ACCOUNTS_QUERY, strlen(SUB_ACCOUNTS_QUERY))) goto quit;
+
+    memset(param, 0, sizeof(param));
+    bind_uint(&param[0], &profileid);
+    bind_uint(&param[1], &args->max);
+    if(mysql_stmt_bind_param(stmt, param)) goto quit;
+
+    memset(result, 0, sizeof(result));
+    bind_uint(&result[0], &id);
+    bind_string(&result[1], name, sizeof(name));
+    result[1].length  = &name_len;
+    result[0].is_null = &is_null[0];
+    result[1].is_null = &is_null[1];
+    if(mysql_stmt_bind_result(stmt, result)) goto quit;
+    if(mysql_stmt_execute(stmt)) goto quit;
+
+    while(((fetched = mysql_stmt_fetch(stmt)) == 0) || (fetched == MYSQL_DATA_TRUNCATED)) {
+        if((fetched == MYSQL_DATA_TRUNCATED) || is_null[0] || is_null[1] || !id || !name_len) {
+            fprintf(stderr, "database: sub-account %u of account %u has an invalid row, ignored\n", id, profileid);
+            continue;
+        }
+        if(*args->count >= args->max) break;
+        memset(&args->list[*args->count], 0, sizeof(fesl_sub_account));
+        args->list[*args->count].id = id;
+        memcpy(args->list[*args->count].name, name, name_len);
+        (*args->count)++;
+    }
+    if(fetched == MYSQL_NO_DATA) ret = FESL_ACCOUNT_FOUND;
+
+quit:
+    if(ret == FESL_ACCOUNT_ERROR) fprintf(stderr, "database: sub-account lookup failed: %s\n", mysql_stmt_error(stmt));
+    mysql_stmt_close(stmt);
+    return ret;
+}
+
+typedef struct {
+    const fesl_sub_account *sub;
+    const char      *challenge,
+                    *ticket;
+} preauth_args;
+
+static int op_preauth(db_store *db, void *arg) {
+    preauth_args    *args = arg;
+    MYSQL_STMT      *stmt;
+    MYSQL_BIND      param[3];
+    unsigned long   challenge_len,
+                    ticket_len;
+    unsigned int    id = args->sub->id;
+    int             ret = FESL_ACCOUNT_ERROR;
+
+    stmt = mysql_stmt_init(db->conn);
+    if(!stmt) return FESL_ACCOUNT_ERROR;
+    if(mysql_stmt_prepare(stmt, PREAUTH_QUERY, strlen(PREAUTH_QUERY))) goto quit;
+
+    memset(param, 0, sizeof(param));
+    bind_param_string(&param[0], args->challenge, &challenge_len);
+    bind_param_string(&param[1], args->ticket, &ticket_len);
+    bind_uint(&param[2], &id);
+    if(mysql_stmt_bind_param(stmt, param)) goto quit;
+    if(mysql_stmt_execute(stmt)) goto quit;
+
+    if(mysql_stmt_affected_rows(stmt) > 0) {
+        ret = FESL_ACCOUNT_FOUND;
+    } else {
+        fprintf(stderr, "database: no gamespy_players row with id %u for sub-account %s, "
+                        "its GameSpy login will fail\n", id, args->sub->name);
+        ret = FESL_ACCOUNT_NOT_FOUND;
+    }
+
+quit:
+    if(ret == FESL_ACCOUNT_ERROR) fprintf(stderr, "database: saving the GameSpy pre-auth failed: %s\n", mysql_stmt_error(stmt));
+    mysql_stmt_close(stmt);
+    return ret;
+}
+
+// runs op on the shared connection, a second time on a fresh connection if
+// the server restarted or dropped an idle connection
+static int db_run(db_store *db, int (*op)(db_store *, void *), void *arg) {
+    int     ret = FESL_ACCOUNT_ERROR,
+            attempt;
+
     mysql_thread_init();
-
     pthread_mutex_lock(&db->lock);
-    // a second attempt on a fresh connection, if the server restarted or
-    // dropped an idle connection
     for(attempt = 0; attempt < 2; attempt++) {
         if(db_connect(db) < 0) break;
-        ret = db_query(db, name, out);
+        ret = op(db, arg);
         if(ret != FESL_ACCOUNT_ERROR) break;
         db_disconnect(db);
     }
     pthread_mutex_unlock(&db->lock);
     return ret;
+}
+
+static int db_find(fesl_account_store *store, const char *name, fesl_account *out) {
+    find_args   args = { name, out };
+
+    if(strlen(name) > ACCOUNT_NAME_SIZE) return FESL_ACCOUNT_NOT_FOUND;
+    return db_run(store->ctx, op_find, &args);
+}
+
+static int db_sub_accounts(fesl_account_store *store, const fesl_account *acc,
+        fesl_sub_account *list, size_t max, size_t *count) {
+    sub_accounts_args args = { acc, list, (unsigned int)max, count };
+
+    return db_run(store->ctx, op_sub_accounts, &args);
+}
+
+static int db_save_preauth(fesl_account_store *store, const fesl_sub_account *sub,
+        const char *challenge, const char *ticket) {
+    preauth_args args = { sub, challenge, ticket };
+
+    return db_run(store->ctx, op_preauth, &args);
 }
 
 static void db_thread_end(fesl_account_store *store) {
@@ -220,8 +359,10 @@ int fesl_accounts_db_open(fesl_account_store *store, const fesl_db_config *confi
     printf("database: %s on %s, %s accounts\n", config->name, config->host, (row && row[0]) ? row[0] : "?");
     mysql_free_result(res);
 
-    store->find       = db_find;
-    store->thread_end = db_thread_end;
+    store->find         = db_find;
+    store->sub_accounts = db_sub_accounts;
+    store->save_preauth = db_save_preauth;
+    store->thread_end   = db_thread_end;
     store->ctx        = db;
     return 0;
 

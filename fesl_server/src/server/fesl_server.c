@@ -151,6 +151,7 @@ static void *client_thread(void *arg) {
     int         n,
                 ret,
                 logged_in,
+                sub_login,
                 done = 0;
 
     printf("%s: connected\n", c->peer);
@@ -202,8 +203,10 @@ static void *client_thread(void *arg) {
                 len -= consumed;
 
                 logged_in = !strcmp(pkt.command, "acct") && fesl_txn(&pkt) && !strcmp(fesl_txn(&pkt), "Login");
+                sub_login = !strcmp(pkt.command, "acct") && fesl_txn(&pkt) && !strcmp(fesl_txn(&pkt), "LoginSubAccount");
                 ret = fesl_session_handle(&session, &pkt, time(NULL), &out);
                 if(logged_in && session.account) printf("%s: logged in as %s\n", c->peer, session.account->name);
+                if(sub_login && session.sub_account) printf("%s: playing as %s\n", c->peer, session.sub_account->name);
                 fesl_packet_free(&pkt);
                 if(ret != FESL_SESSION_CONTINUE) {
                     done = 1;

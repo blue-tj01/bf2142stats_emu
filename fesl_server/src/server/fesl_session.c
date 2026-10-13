@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <stdarg.h>
 #include "fesl_session.h"
 
@@ -122,6 +123,11 @@ static int reply_error(fesl_output *out, const fesl_packet *req, int code, const
     return reply_field_error(out, req, code, message, NULL);
 }
 
+static int reply_store_error(fesl_output *out, const fesl_packet *req) {
+    // not the player's fault, so not counted as a failed attempt
+    return reply_error(out, req, FESL_ERROR_SYSTEM, "The account service is unavailable, try again later");
+}
+
 static int handle_hello(fesl_session *s, const fesl_packet *req, time_t now, fesl_output *out) {
     answer      a = { .len = 0 };
     struct tm   tm;
@@ -176,7 +182,8 @@ static int handle_login(fesl_session *s, const fesl_packet *req, fesl_output *ou
                         *encrypted;
     char                info[ENCRYPTED_LOGIN_INFO_SIZE + 1];
 
-    s->account = NULL;  // a failed new login logs out
+    s->account     = NULL;  // a failed new login logs out
+    s->sub_account = NULL;
     if(!s->hello_done) return reply_error(out, req, FESL_ERROR_SYSTEM, "Hello expected");
     if(s->failed_logins >= FESL_MAX_LOGIN_ATTEMPTS) {
         return reply_error(out, req, FESL_ERROR_TOO_MANY_ATTEMPTS, "Too many failed login attempts");
@@ -199,8 +206,7 @@ static int handle_login(fesl_session *s, const fesl_packet *req, fesl_output *ou
             s->failed_logins++;
             return reply_error(out, req, FESL_ERROR_USER_NOT_FOUND, "The user was not found");
         default:
-            // not the player's fault, so not counted as a failed attempt
-            return reply_error(out, req, FESL_ERROR_SYSTEM, "The account service is unavailable, try again later");
+            return reply_store_error(out, req);
     }
     if(!password || strcmp(password, acc->password)) {
         s->failed_logins++;
@@ -267,6 +273,96 @@ static int handle_get_account(fesl_session *s, const fesl_packet *req, fesl_outp
     return reply(out, req, &a);
 }
 
+// the unlock bundles (REG-PC-BF2142-UNLOCK-1 to 3): no entitlement, word for
+// word like the captured answers, whose message isn't quoted
+static int handle_entitlement_by_bundle(fesl_session *s, const fesl_packet *req, fesl_output *out) {
+    answer  a = { .len = 0 };
+
+    if(!s->account) return reply_error(out, req, FESL_ERROR_SYSTEM, "Login required");
+    add(&a, "TXN", "GetEntitlementByBundle");
+    add(&a, "localizedMessage", "The customer has never had entitlement for this bundle.");
+    add(&a, "errorContainer.[]", "0");
+    add(&a, "errorCode", "%d", FESL_ERROR_NO_ENTITLEMENT);
+    return reply(out, req, &a);
+}
+
+// the soldiers of the account, the count comes last as in the capture
+static int handle_get_sub_accounts(fesl_session *s, const fesl_packet *req, fesl_output *out) {
+    answer              a = { .len = 0 };
+    fesl_sub_account    list[FESL_MAX_SUB_ACCOUNTS];
+    size_t              count,
+                        i;
+    char                key[32];
+
+    if(!s->account) return reply_error(out, req, FESL_ERROR_SYSTEM, "Login required");
+    if(s->accounts->sub_accounts(s->accounts, s->account, list, FESL_MAX_SUB_ACCOUNTS, &count) != FESL_ACCOUNT_FOUND) {
+        return reply_store_error(out, req);
+    }
+    add(&a, "TXN", "GetSubAccounts");
+    for(i = 0; i < count; i++) {
+        snprintf(key, sizeof(key), "subAccounts.%u", (unsigned)i);
+        add_text(&a, key, list[i].name);
+    }
+    add(&a, "subAccounts.[]", "%u", (unsigned)count);
+    return reply(out, req, &a);
+}
+
+// profileId is the soldier, userId the account (both 10 in the capture)
+static int handle_login_sub_account(fesl_session *s, const fesl_packet *req, fesl_output *out) {
+    answer              a = { .len = 0 };
+    fesl_sub_account    list[FESL_MAX_SUB_ACCOUNTS];
+    const char          *name = fesl_get(req, "name");
+    size_t              count,
+                        i;
+
+    s->sub_account = NULL;
+    if(!s->account) return reply_error(out, req, FESL_ERROR_SYSTEM, "Login required");
+    if(s->accounts->sub_accounts(s->accounts, s->account, list, FESL_MAX_SUB_ACCOUNTS, &count) != FESL_ACCOUNT_FOUND) {
+        return reply_store_error(out, req);
+    }
+    for(i = 0; i < count; i++) {
+        if(name && !strcasecmp(name, list[i].name)) break;
+    }
+    if(i == count) return reply_field_error(out, req, FESL_ERROR_USER_NOT_FOUND, "The user was not found", "name");
+
+    s->sub_account_data = list[i];
+    s->sub_account      = &s->sub_account_data;
+    make_lkey(s);       // a new key for the soldier's session
+
+    add(&a, "TXN", "LoginSubAccount");
+    add(&a, "lkey", "%s", s->lkey);
+    add(&a, "profileId", "%u", s->sub_account->id);
+    add(&a, "userId", "%u", s->account->user_id);
+    return reply(out, req, &a);
+}
+
+static void random_text(fesl_session *s, char *buf, size_t len, const char *chars) {
+    size_t  n = strlen(chars),
+            i;
+
+    for(i = 0; i < len; i++) buf[i] = chars[s->random(s->random_ctx) % n];
+    buf[len] = 0;
+}
+
+// the ticket the game shows the GameSpy login next; the database store saves
+// it where fesl_login_server.exe's GameSpy login looks for it. A failure to
+// save it is only logged by the store: the FESL login itself goes on
+static int handle_gamespy_preauth(fesl_session *s, const fesl_packet *req, fesl_output *out) {
+    answer  a = { .len = 0 };
+    char    challenge[FESL_CHALLENGE_SIZE + 1],
+            ticket[FESL_TICKET_SIZE + 1];
+
+    if(!s->sub_account) return reply_error(out, req, FESL_ERROR_SYSTEM, "LoginSubAccount required");
+    random_text(s, challenge, FESL_CHALLENGE_SIZE, "abcdefghijklmnopqrstuvwxyz");
+    random_text(s, ticket, FESL_TICKET_SIZE, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+");
+    if(s->accounts->save_preauth) s->accounts->save_preauth(s->accounts, s->sub_account, challenge, ticket);
+
+    add(&a, "TXN", "GameSpyPreAuth");
+    add(&a, "challenge", "%s", challenge);
+    add(&a, "ticket", "%s", ticket);
+    return reply(out, req, &a);
+}
+
 // BF2142 asks for the booster pack (objectIds.0=bf2142_bp1); both the
 // captured server and EA's NFS Carbon server answered with no entitlements
 static int handle_object_inventory(const fesl_packet *req, fesl_output *out) {
@@ -299,6 +395,11 @@ int fesl_session_handle(fesl_session *s, const fesl_packet *req, time_t now, fes
     } else if(!strcmp(req->command, "acct")) {
         if(!strcmp(txn, "Login"))    return handle_login(s, req, out);
         if(!strcmp(txn, "GetAccount")) return handle_get_account(s, req, out);
+        if(!strcmp(txn, "GetSubAccounts")) return handle_get_sub_accounts(s, req, out);
+        if(!strcmp(txn, "LoginSubAccount")) return handle_login_sub_account(s, req, out);
+        if(!strcmp(txn, "GameSpyPreAuth")) return handle_gamespy_preauth(s, req, out);
+    } else if(!strcmp(req->command, "subs")) {
+        if(!strcmp(txn, "GetEntitlementByBundle")) return handle_entitlement_by_bundle(s, req, out);
     }
     return reply_error(out, req, FESL_ERROR_SYSTEM, "Not implemented");
 }

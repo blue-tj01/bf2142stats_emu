@@ -136,10 +136,25 @@ static int captured_find(fesl_account_store *store, const char *name, fesl_accou
     return FESL_ACCOUNT_FOUND;
 }
 
+// one sub-account per account, the account itself, like the accounts file
+static int self_sub_accounts(fesl_account_store *store, const fesl_account *acc,
+        fesl_sub_account *list, size_t max, size_t *count) {
+    (void)store;
+    (void)max;
+    memset(list, 0, sizeof(*list));
+    list->id = acc->user_id;
+    strcpy(list->name, acc->name);
+    *count = 1;
+    return FESL_ACCOUNT_FOUND;
+}
+
+static int is_text(const char *s, size_t len, const char *chars) {
+    return s && (strlen(s) == len) && (strspn(s, chars) == len);
+}
+
 static void test_replay(const char *path, int exact_time) {
     static const char   *hello_skip[] = { "curTime", NULL },
-                        *memcheck_skip[] = { "salt", NULL },
-                        *login_skip[] = { "lkey", NULL };
+                        *memcheck_skip[] = { "salt", NULL };
     pcap_tcp_streams    s;
     packet_list client,
                 server,
@@ -152,8 +167,8 @@ static void test_replay(const char *path, int exact_time) {
                 *mine;
     uint32_t    rnd = 1;
     size_t      i;
-    int         inventories = 0,
-                accounts_answered = 0;
+    int         matched = 0;
+    char        login_lkey[FESL_LKEY_SIZE + 1] = "";
     char        curtime[64];
 
     printf("session replay %s\n", path);
@@ -163,9 +178,10 @@ static void test_replay(const char *path, int exact_time) {
     CHECK(decode_all(s.to_server.data, s.to_server.len, &client) == 0);
     CHECK(decode_all(s.to_client.data, s.to_client.len, &server) == 0);
 
-    // every client packet in capture order, the ones we don't handle yet
-    // just get an error answer
-    store.find = captured_find;
+    // every client packet in capture order; no pre-auth to save
+    memset(&store, 0, sizeof(store));
+    store.find         = captured_find;
+    store.sub_accounts = self_sub_accounts;
     fesl_session_init(&session, &store, counter_random, &rnd);
     for(i = 0; i < client.count; i++) {
         CHECK(fesl_session_handle(&session, &client.pkt[i], D1_HELLO_TIME, &out) == FESL_SESSION_CONTINUE);
@@ -192,31 +208,52 @@ static void test_replay(const char *path, int exact_time) {
         CHECK_STR(curtime, "\"Sep-03-2015 16%3a01%3a12 UTC\"");
     }
 
-    // the handled answers match the captured ones
+    // every captured request is handled now: no "not implemented" answers
+    for(i = 0; i < ours.count; i++) {
+        if(fesl_get(&ours.pkt[i], "errorCode")) CHECK_STR(fesl_get(&ours.pkt[i], "errorCode"), "3012");
+    }
+    CHECK(session.sub_account && !strcmp(session.sub_account->name, "Tema567"));
+
+    // and the answers match the captured ones; the random values only in format
     for(i = 0; i < server.count; i++) {
+        static const char   *lkey_skip[] = { "lkey", NULL },
+                            *preauth_skip[] = { "challenge", "ticket", NULL };
+        const char  *txn;
+
         captured = &server.pkt[i];
-        if(!strcmp(fesl_txn(captured), "Login")) {
-            mine = find_answer(&ours, captured->command, captured->number, "Login");
-            CHECK(mine != NULL);
-            if(!mine) continue;
-            compare_answer(mine, captured, login_skip, 1);
+        txn = fesl_txn(captured);
+        if(!strcmp(txn, "Hello") || !strcmp(txn, "MemCheck") || !strcmp(txn, "Ping")) continue;   // checked above
+        mine = find_answer(&ours, captured->command, captured->number, txn);
+        CHECK(mine != NULL);
+        if(!mine) {
+            fprintf(stderr, "no answer to %s #%u\n", txn, captured->number);
+            continue;
+        }
+        matched++;
+        if(!strcmp(txn, "Login")) {
+            compare_answer(mine, captured, lkey_skip, 1);
             CHECK(strlen(fesl_get(mine, "lkey")) == FESL_LKEY_SIZE);
             CHECK(fesl_get(mine, "lkey")[FESL_LKEY_SIZE - 1] == '.');
+            snprintf(login_lkey, sizeof(login_lkey), "%s", fesl_get(mine, "lkey"));
+        } else if(!strcmp(txn, "LoginSubAccount")) {
+            // a new key for the soldier
+            compare_answer(mine, captured, lkey_skip, 1);
+            CHECK(strlen(fesl_get(mine, "lkey")) == FESL_LKEY_SIZE);
             CHECK_STR(fesl_get(mine, "lkey"), session.lkey);
-        } else if(!strcmp(fesl_txn(captured), "GetObjectInventory")) {
-            mine = find_answer(&ours, captured->command, captured->number, "GetObjectInventory");
-            CHECK(mine != NULL);
-            if(mine) compare_answer(mine, captured, NULL, 1);
-            inventories++;
-        } else if(!strcmp(fesl_txn(captured), "GetAccount")) {
-            mine = find_answer(&ours, captured->command, captured->number, "GetAccount");
-            CHECK(mine != NULL);
-            if(mine) compare_answer(mine, captured, NULL, 1);   // every field, in order
-            accounts_answered++;
+            CHECK(strcmp(fesl_get(mine, "lkey"), login_lkey));
+        } else if(!strcmp(txn, "GameSpyPreAuth")) {
+            compare_answer(mine, captured, preauth_skip, 1);
+            CHECK(is_text(fesl_get(mine, "challenge"), FESL_CHALLENGE_SIZE, "abcdefghijklmnopqrstuvwxyz"));
+            CHECK(is_text(fesl_get(mine, "ticket"), FESL_TICKET_SIZE,
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+"));
+        } else {
+            // GetEntitlementByBundle, GetObjectInventory, GetSubAccounts,
+            // GetAccount: every field, in order
+            compare_answer(mine, captured, NULL, 1);
         }
     }
-    CHECK(inventories == 3);
-    CHECK(accounts_answered == 1);
+    // Login, 3 bundles, 3 inventories, GetSubAccounts, LoginSubAccount, GetAccount, GameSpyPreAuth
+    CHECK(matched == 11);
 
     free_list(&ours);
     free_list(&client);
@@ -525,7 +562,8 @@ static void test_get_account(void) {
 
     // text from the store is escaped, in Login and GetAccount
     memset(&store, 0, sizeof(store));
-    store.find = odd_find;
+    store.find         = odd_find;
+    store.sub_accounts = self_sub_accounts;
     fesl_session_init(&s, &store, counter_random, &rnd);
     CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
     free_list(&ans);
@@ -544,8 +582,183 @@ static void test_get_account(void) {
     free_list(&ans);
 }
 
+// an account with three soldiers, one of them with a name to escape;
+// sub_down makes the sub-account lookup fail, and the pre-auth is recorded
+static int  sub_down = 0,
+            preauth_calls = 0,
+            preauth_result = FESL_ACCOUNT_FOUND;
+static char preauth_challenge[FESL_CHALLENGE_SIZE + 1],
+            preauth_ticket[FESL_TICKET_SIZE + 1];
+static uint32_t preauth_id;
+
+static int three_sub_accounts(fesl_account_store *store, const fesl_account *acc,
+        fesl_sub_account *list, size_t max, size_t *count) {
+    static const char   *names[] = { "Alpha", "Bravo", "Char%lie" };
+    size_t  i;
+
+    (void)store;
+    (void)acc;
+    *count = 0;
+    if(sub_down) return FESL_ACCOUNT_ERROR;
+    for(i = 0; (i < 3) && (i < max); i++) {
+        memset(&list[i], 0, sizeof(list[i]));
+        list[i].id = 20000 + i;
+        strcpy(list[i].name, names[i]);
+        (*count)++;
+    }
+    return FESL_ACCOUNT_FOUND;
+}
+
+static int record_preauth(fesl_account_store *store, const fesl_sub_account *sub, const char *challenge, const char *ticket) {
+    (void)store;
+    preauth_calls++;
+    preauth_id = sub->id;
+    snprintf(preauth_challenge, sizeof(preauth_challenge), "%s", challenge);
+    snprintf(preauth_ticket, sizeof(preauth_ticket), "%s", ticket);
+    return preauth_result;
+}
+
+static void test_sub_accounts(void) {
+    fesl_accounts accounts;
+    fesl_account_store store;
+    fesl_session s;
+    packet_list ans;
+    uint32_t    rnd = 1;
+    char        lkey[FESL_LKEY_SIZE + 1];
+
+    CHECK(fesl_accounts_parse(&accounts, ACCOUNTS) == 0);
+    fesl_accounts_store_init(&store, &accounts);
+    store.sub_accounts = three_sub_accounts;
+    store.save_preauth = record_preauth;
+    fesl_session_init(&s, &store, counter_random, &rnd);
+    CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+
+    // nothing before a Login, no pre-auth before a LoginSubAccount
+    CHECK(handle_one(&s, "subs", 2, "TXN=GetEntitlementByBundle\nbundleId=REG-PC-BF2142-UNLOCK-1\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "subs", 2, "GetEntitlementByBundle", "99");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 3, "TXN=GetSubAccounts\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 3, "GetSubAccounts", "99");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 4, "TXN=LoginSubAccount\nname=Alpha\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 4, "LoginSubAccount", "99");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 5, "TXN=Login\nname=other\npassword=secret\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 6, "TXN=GameSpyPreAuth\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 6, "GameSpyPreAuth", "99");
+    free_list(&ans);
+    CHECK(preauth_calls == 0);
+
+    // unlock bundles: never entitled, unquoted message as captured
+    CHECK(handle_one(&s, "subs", 7, "TXN=GetEntitlementByBundle\nbundleId=REG-PC-BF2142-UNLOCK-2\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "subs", 7, "GetEntitlementByBundle", "3012");
+    if(ans.count == 1) CHECK_STR(fesl_get(&ans.pkt[0], "localizedMessage"), "The customer has never had entitlement for this bundle.");
+    free_list(&ans);
+
+    // the list, in order, escaped, with the count last
+    CHECK(handle_one(&s, "acct", 8, "TXN=GetSubAccounts\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1);
+    if(ans.count == 1) {
+        CHECK(ans.pkt[0].count == 5);
+        CHECK_STR(ans.pkt[0].pairs[1].key, "subAccounts.0");
+        CHECK_STR(ans.pkt[0].pairs[1].value, "Alpha");
+        CHECK_STR(fesl_get(&ans.pkt[0], "subAccounts.1"), "Bravo");
+        CHECK_STR(fesl_get(&ans.pkt[0], "subAccounts.2"), "Char%25lie");
+        CHECK_STR(ans.pkt[0].pairs[4].key, "subAccounts.[]");
+        CHECK_STR(ans.pkt[0].pairs[4].value, "3");
+    }
+    free_list(&ans);
+
+    // only a soldier of the account, case-insensitively
+    snprintf(lkey, sizeof(lkey), "%s", s.lkey);
+    CHECK(handle_one(&s, "acct", 9, "TXN=LoginSubAccount\nname=Delta\n", &ans) == FESL_SESSION_CONTINUE);
+    check_field_error(&ans, "acct", 9, "LoginSubAccount", "101", "name");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 10, "TXN=LoginSubAccount\n", &ans) == FESL_SESSION_CONTINUE);
+    check_field_error(&ans, "acct", 10, "LoginSubAccount", "101", "name");
+    free_list(&ans);
+    CHECK(!s.sub_account);
+    CHECK(handle_one(&s, "acct", 11, "TXN=LoginSubAccount\nname=bravo\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1);
+    if(ans.count == 1) {
+        CHECK(!fesl_get(&ans.pkt[0], "errorCode"));
+        CHECK_STR(fesl_get(&ans.pkt[0], "profileId"), "20001");    // the soldier
+        CHECK_STR(fesl_get(&ans.pkt[0], "userId"), "11");          // the account
+        CHECK_STR(fesl_get(&ans.pkt[0], "lkey"), s.lkey);
+        CHECK(strcmp(s.lkey, lkey));
+    }
+    CHECK(s.sub_account && (s.sub_account->id == 20001) && !strcmp(s.sub_account->name, "Bravo"));
+    free_list(&ans);
+
+    // the pre-auth answered is the one saved, even when saving fails
+    CHECK(handle_one(&s, "acct", 12, "TXN=GameSpyPreAuth\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1);
+    if(ans.count == 1) {
+        CHECK(ans.pkt[0].count == 3);
+        CHECK_STR(fesl_get(&ans.pkt[0], "challenge"), preauth_challenge);
+        CHECK_STR(fesl_get(&ans.pkt[0], "ticket"), preauth_ticket);
+    }
+    CHECK((preauth_calls == 1) && (preauth_id == 20001));
+    free_list(&ans);
+    preauth_result = FESL_ACCOUNT_ERROR;
+    CHECK(handle_one(&s, "acct", 13, "TXN=GameSpyPreAuth\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1 && !fesl_get(&ans.pkt[0], "errorCode"));
+    if(ans.count == 1) CHECK_STR(fesl_get(&ans.pkt[0], "ticket"), preauth_ticket);  // the store got the new one
+    CHECK(preauth_calls == 2);
+    free_list(&ans);
+    preauth_result = FESL_ACCOUNT_FOUND;
+
+    // a store error is a system error; a failed LoginSubAccount logs the soldier out
+    sub_down = 1;
+    CHECK(handle_one(&s, "acct", 14, "TXN=GetSubAccounts\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 14, "GetSubAccounts", "99");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 15, "TXN=LoginSubAccount\nname=Alpha\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 15, "LoginSubAccount", "99");
+    free_list(&ans);
+    CHECK(!s.sub_account);
+    sub_down = 0;
+
+    // a new Login logs the soldier out too
+    CHECK(handle_one(&s, "acct", 16, "TXN=LoginSubAccount\nname=Alpha\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(s.sub_account && (s.sub_account->id == 20000));
+    CHECK(handle_one(&s, "acct", 17, "TXN=Login\nname=other\npassword=secret\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(!s.sub_account);
+    CHECK(handle_one(&s, "acct", 18, "TXN=GameSpyPreAuth\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 18, "GameSpyPreAuth", "99");
+    free_list(&ans);
+
+    // the accounts file: one soldier, the account itself, and no pre-auth to save
+    fesl_accounts_store_init(&store, &accounts);
+    fesl_session_init(&s, &store, counter_random, &rnd);
+    CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 2, "TXN=Login\nname=Tema567\npassword=123456\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 3, "TXN=GetSubAccounts\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1 && (ans.pkt[0].count == 3));
+    if(ans.count == 1) CHECK_STR(fesl_get(&ans.pkt[0], "subAccounts.0"), "Tema567");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 4, "TXN=LoginSubAccount\nname=Tema567\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1);
+    if(ans.count == 1) {
+        CHECK_STR(fesl_get(&ans.pkt[0], "profileId"), "10");
+        CHECK_STR(fesl_get(&ans.pkt[0], "userId"), "10");
+    }
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 5, "TXN=GameSpyPreAuth\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1 && !fesl_get(&ans.pkt[0], "errorCode"));
+    free_list(&ans);
+    CHECK(preauth_calls == 2);      // nothing to save
+    fesl_accounts_free(&accounts);
+}
+
 static void test_store_errors(void) {
-    fesl_account_store store = { .find = down_find };
+    fesl_account_store store = { .find = down_find, .sub_accounts = self_sub_accounts };
     fesl_session s;
     packet_list ans;
     uint32_t    rnd = 1;
@@ -633,6 +846,7 @@ int main(int argc, char *argv[]) {
     test_account_status();
     test_store_errors();
     test_get_account();
+    test_sub_accounts();
 
     snprintf(path, sizeof(path), "%s/d1/dump2_ssl.pcap", dir);
     test_replay(path, 1);

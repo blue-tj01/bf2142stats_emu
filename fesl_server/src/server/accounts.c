@@ -130,9 +130,23 @@ static int file_find(fesl_account_store *store, const char *name, fesl_account *
     return FESL_ACCOUNT_FOUND;
 }
 
+// like the captured server: one sub-account, the account itself
+static int file_sub_accounts(fesl_account_store *store, const fesl_account *acc,
+        fesl_sub_account *list, size_t max, size_t *count) {
+    (void)store;
+    *count = 0;
+    if(!max) return FESL_ACCOUNT_FOUND;
+    memset(list, 0, sizeof(fesl_sub_account));
+    list->id = acc->user_id;
+    memcpy(list->name, acc->name, sizeof(list->name));
+    *count = 1;
+    return FESL_ACCOUNT_FOUND;
+}
+
 void fesl_accounts_store_init(fesl_account_store *store, const fesl_accounts *a) {
     memset(store, 0, sizeof(fesl_account_store));
-    store->find = file_find;
+    store->find         = file_find;
+    store->sub_accounts = file_sub_accounts;
     store->ctx  = (void *)a;
 }
 
