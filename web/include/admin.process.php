@@ -199,15 +199,15 @@ function processImportLogs() {
 	
 	// Find Log Files
 	showLog("Importing Log Files");
-	$regex = '([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{4})';
+	$regex = '/([0-9]{4})([0-9]{2})([0-9]{2})_([0-9]{4})/';
 		
 	$dir = opendir(chkPath($cfg->get('stats_logs')));
 	chdir(chkPath($cfg->get('stats_logs')));
 	while (($file = readdir($dir)) !== false) {
 		if (strpos($file, $cfg->get('stats_ext')))
 		{
-			ereg($regex,$file,$sort);
-			$files[] = $sort[0] . "|" . $file;
+			preg_match($regex,$file,$sort);
+			$files[] = (isset($sort[0]) ? $sort[0] : '') . "|" . $file;
 		}
 	}
 	
@@ -269,7 +269,7 @@ function processImportPlayers() {
 	showLog("include ea_support.php");
 	require_once("ea_support.php");
 	showLog("Done! :)");
-	$bfcoding  = &new ea_stats();
+	$bfcoding  = new ea_stats();
 
 	$timestamp = '';
 	$timestamp = time();

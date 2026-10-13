@@ -1,4 +1,5 @@
 <?php
+require_once(dirname(__FILE__) . '/compat.php');
 
 DEFINE('_CODE_VER', '1.10.1');
 
@@ -168,8 +169,10 @@ function ErrorLog($msg, $lvl) {
     if ($lvl <= $cfg->get('debug_lvl')) {
         $err_msg = date('Y-m-d H:i:s') . " -- " . $lvl_txt . $msg . "\n";
         $file = @fopen($cfg->get('debug_log'), 'a');
-        @fwrite($file, $err_msg);
-        @fclose($file);
+        if ($file) {
+            fwrite($file, $err_msg);
+            fclose($file);
+        }
         //echo "<br />----------------------------------------------------------------------------------------------------<br />$err_msg";
     }
 }
@@ -234,7 +237,7 @@ function getPageContents($url) {
 }
 
 function chkPath($path) {
-    if (($path{strlen($path) - 1} != "/") && ($path{strlen($path) - 1} != "\\")) {
+    if (($path[strlen($path) - 1] != "/") && ($path[strlen($path) - 1] != "\\")) {
         return $path . "/";
     } else {
         return $path;
@@ -247,7 +250,7 @@ class Config {
     var $data = array();
     var $configFile = 'include/_ccconfig.php'; //Default Config File
 
-    function Config() {
+    function __construct() {
         $this->Load();
 
         // Verify Code Version

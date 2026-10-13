@@ -17,6 +17,7 @@ if(isset($_GET["auth"]) AND $_GET["auth"] != "") {	$auth = $_GET["auth"];	} else
 
 require_once("ea_support.php");
 require_once('include/_ccconfig.php');
+require_once('include/compat.php');
 
 $bfcoding  = new ea_stats();
 $code = $bfcoding->str2hex($bfcoding->DefDecryptBlock($bfcoding->getBase64Decode($auth)));
