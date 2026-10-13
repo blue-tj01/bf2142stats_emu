@@ -168,6 +168,10 @@ function ErrorLog($msg, $lvl) {
 
     if ($lvl <= $cfg->get('debug_lvl')) {
         $err_msg = date('Y-m-d H:i:s') . " -- " . $lvl_txt . $msg . "\n";
+        $logDir = dirname($cfg->get('debug_log'));
+        if (!is_dir($logDir)) {
+            @mkdir($logDir, 0777, true);
+        }
         $file = @fopen($cfg->get('debug_log'), 'a');
         if ($file) {
             fwrite($file, $err_msg);

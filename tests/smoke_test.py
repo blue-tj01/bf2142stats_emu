@@ -17,6 +17,7 @@ import shlex
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -182,6 +183,19 @@ def test_tokens():
           .startswith("ExpiredAuth"), "expired token rejected by leaderboard")
 
 
+def test_no_request_dumps():
+    print("Request logging is off by default")
+    for name in ("getplayerinfo.txt", "getunlocksinfo.txt", "getleaderboard.txt", "sinthetixData.txt"):
+        try:
+            request(name)
+            status = 200
+        except urllib.error.HTTPError as e:
+            status = e.code
+        # 404 when the file doesn't exist; Apache's .htaccess answers 403 for
+        # any .txt name, existing or not
+        check(status in (403, 404), "no %s downloadable from the web root" % name)
+
+
 def wait_for_server():
     for _ in range(60):
         try:
@@ -198,6 +212,7 @@ if __name__ == "__main__":
     test_round_upload()
     test_endpoints()
     test_tokens()
+    test_no_request_dumps()
     if failures:
         print("\n%d check(s) failed" % len(failures))
         sys.exit(1)

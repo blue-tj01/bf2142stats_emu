@@ -2,6 +2,11 @@
 web/*.txt
 web/logs/
 web/include/_ccconfig.php.bak
+# Request/error logs written outside the web root (../logs from web/)
+/logs/
+
+# Local settings, created from web/include/_ccconfig.example.php
+web/include/_ccconfig.php
 
 # Local Docker settings
 .env

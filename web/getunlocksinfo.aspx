@@ -1,12 +1,8 @@
 <?php 
 
 
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . "==" . $val . "&";
-}
-file_put_contents('getunlocksinfo.txt', $str);
+require_once('include/requestlog.php');
+logRequest('getunlocksinfo');
 
 $timestamp = time();
 $authPIDAvcred = 0;

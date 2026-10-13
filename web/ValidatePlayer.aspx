@@ -1,11 +1,7 @@
 <?php
 $timestamp = time();
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . "=" . $val . "&";
-}
-file_put_contents('ValidatePlayer.txt', $str);
+require_once('include/requestlog.php');
+logRequest('ValidatePlayer');
 
 //auth=MVI[zJuk3ZC8l2]4rVIvj5__&tid=0&SoldierNick=Sinthetix&pid=5&
 //$_GET['auth'] = "MVI[zJuk3ZC8l2]4rVIvj5__";

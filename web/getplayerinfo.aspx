@@ -3,12 +3,8 @@
 $timestamp = time();
 $authPIDAvcred = 0;
 
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . "=" . $val . "&";
-}
-file_put_contents('getplayerinfo.txt', $str);
+require_once('include/requestlog.php');
+logRequest('getplayerinfo');
 
 if (isset($_GET["auth"]) AND $_GET["auth"] != "") {
     $auth = $_GET["auth"];

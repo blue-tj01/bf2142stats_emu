@@ -1,16 +1,15 @@
 <?php
-/***************************************
-*  Battlefield 2 Private Stats Config  *
-****************************************
-* All comments have been removed from  *
-* this file. Please use the Web Admin  *
-* to change values.                    *
-***************************************/
+/*
+ * Battlefield 2142 stats configuration (example).
+ *
+ * Copy this file to _ccconfig.php and set your database details there.
+ * _ccconfig.php is not tracked by git, so your settings stay out of commits.
+ */
 $db_expected_ver = '1.10.1';
 $db_host = 'localhost';
-$db_name = 'имя базы';
-$db_user = 'root';
-$db_pass = 'ваш пароль';
+$db_name = 'bf2142';
+$db_user = 'bf2142';
+$db_pass = 'change-me';
 
 
 #$admin_user = '';
@@ -30,6 +29,12 @@ $stats_min_game_time = 0;
 $stats_min_player_game_time = 0;
 $stats_players_min = 1;
 $stats_players_max = 256;
+
+// Save every game request and round snapshot to $log_dir for debugging.
+// The logs contain players' auth tokens, so keep $log_dir outside the web
+// root (relative paths are relative to the web root).
+$log_requests = 0;
+$log_dir = '../logs/requests/';
 
 $debug_lvl = 4;
 $debug_log = '../logs/_stats_errors.log';

@@ -1,12 +1,8 @@
 <?php
 //exit;
 
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . "=" . $val . "&";
-}
-file_put_contents('playersearch.txt', $str);
+require_once('include/requestlog.php');
+logRequest('playersearch');
 //auth=YCoaqfZZaT8sEDUIaUeFhw__&nick=Necro&gsa=qWGyKsTLrpsTfbNoZ6UJ]4__&
 //$_GET["auth"] = "YCoaqfZZaT8sEDUIaUeFhw__";
 //$_GET["nick"] = "Necro";

@@ -1,11 +1,7 @@
 <?php
 
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . "=" . $val . "&";
-}
-file_put_contents('getleaderboard.txt', $str);
+require_once('include/requestlog.php');
+logRequest('getleaderboard');
 //auth=[hslbhg9zRog6VggiqFFaA__&pos=1&after=17&type=combatscore&gsa=zdKY7TfbhEBG2]Abh8lyKY__&
 //$_GET['auth'] = "FuG6aZRMnpej44D7i6Ck9w__";
 //$_GET['pos'] = "1";

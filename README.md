@@ -94,6 +94,7 @@ Settings in `.env`:
 | `DB_NAME`, `DB_USER`, `DB_PASS` | Database and account used by the web server (and your Fesl login server) |
 | `DB_ROOT_PASS` | MariaDB root password |
 | `AUTHORISED_SERVERS` | Comma-separated game server IPs or `x.x.x.x/nn` subnets allowed to submit round stats |
+| `LOG_REQUESTS` | `1` to save every game request and round snapshot for debugging (see [Logs](#logs)) |
 | `WEB_PORT`, `DB_PORT` | Host ports for the web server and database |
 
 > [!IMPORTANT]
@@ -103,7 +104,7 @@ Settings in `.env`:
 > ```
 > On Docker Desktop (Windows/macOS), requests can reach the container from Docker's internal gateway instead of the game server's real IP. If round stats are rejected, check `docker compose logs web` for the IP that was refused and authorise that.
 
-Round logs are kept in the `web-logs` volume and the database in `db-data`; `docker compose down -v` deletes both.
+The database is kept in the `db-data` volume, and logs in `web-logs` and `web-debug-logs`; `docker compose down -v` deletes them.
 
 ## Setup
 
@@ -140,13 +141,34 @@ Round logs are kept in the `web-logs` volume and the database in `db-data`; `doc
 ### 3. Web (stats) server
 
 1. Copy the contents of `web/` into the **root** of your web server (for example `htdocs/` in XAMPP). The stats system doesn't work from a subfolder.
-2. Edit `web/include/_ccconfig.php` and set `$db_host`, `$db_name`, `$db_user` and `$db_pass`.
+2. Copy `include/_ccconfig.example.php` to `include/_ccconfig.php`, then set `$db_host`, `$db_name`, `$db_user` and `$db_pass` in it. `_ccconfig.php` is ignored by git, so your settings never end up in a commit.
 3. In the `servers` table, add a row for each game server that may submit stats (its local and external IP) with `authorised` set to `1`. Stats from any other IP are rejected.
 4. Make sure Apache allows `.htaccess` overrides (`AllowOverride All`) for the folder. `web/.htaccess` makes `.aspx` files run as PHP and blocks access to log files.
 5. In `php.ini`, turn off error display so PHP messages can't end up in the game's responses:
    ```ini
    display_errors = Off
    ```
+6. Create a `logs/` folder **next to** the web root (not inside it) that the web server can write to. Errors go there, and so do request logs if you turn them on.
+
+#### Logs
+
+| Log | Where | Contents |
+| --- | --- | --- |
+| Errors | `../logs/_stats_errors.log` (`$debug_log`) | Database errors and rejected round uploads |
+| Requests | `../logs/requests/` (`$log_dir`) | Every game request and round snapshot, one file per endpoint. **Off by default**; set `$log_requests = 1` in `_ccconfig.php` (or `LOG_REQUESTS=1` with Docker) while debugging. |
+
+Paths are relative to the web root. Request logs contain players' login tokens, so keep them outside the web root and turn them off again when you're done.
+
+#### Upgrading an existing install
+
+`web/include/_ccconfig.php` is no longer part of the repository. **Back it up before you `git pull`**, then put it back afterwards. Add these two lines to it if you want the request log setting:
+
+```php
+$log_requests = 0;
+$log_dir = '../logs/requests/';
+```
+
+Old request dumps (`*.txt` files in the web root, such as `getplayerinfo.txt` and `sinthetixData.txt`) are no longer written and can be deleted.
 
 ### 4. Game server
 
@@ -203,7 +225,8 @@ The 1.51 executable has the server IP built in as `192.168.1.3`. Replace it with
 
 - Only game servers listed as `authorised` in the `servers` table can submit round stats.
 - `web/sample.php` is a debugging page that can create login tokens for any player. `.htaccess` limits it to localhost; delete it on a public server if you don't need it.
-- The endpoints save each request to `.txt` files in the web root, and these include players' login tokens. `.htaccess` blocks access to them, so don't remove those rules.
+- Request logging is off by default. When it's on, the logs include players' login tokens, so keep `$log_dir` outside the web root. `.htaccess` also blocks `.txt`, `.log` and `.bak` files in the web root as a safety net.
+- Your database password lives only in `web/include/_ccconfig.php`, which git ignores.
 - The token format is EA's original, and its key is public in `ea_support.php`. Tokens are a convenience check, not real authentication.
 
 ## Troubleshooting
@@ -214,7 +237,7 @@ The 1.51 executable has the server IP built in as `192.168.1.3`. Replace it with
 | Login server can't connect to MySQL 8 | Recreate the user with `mysql_native_password` (see [Database](#1-database)). |
 | `libmySQL.dll` missing | Recent XAMPP versions don't include it; get it from the [MySQL C Connector archive](https://downloads.mysql.com/archives/c-c/). |
 | Game shows no stats or garbled responses | Check `display_errors = Off`, that `web/` is at the web root, and that `.htaccess` is being applied. |
-| Round stats are never saved | Make sure the game server's IP is in the `servers` table with `authorised = 1`, and look in `web/logs/`. |
+| Round stats are never saved | Make sure the game server's IP is in the `servers` table with `authorised = 1`, and check `../logs/_stats_errors.log`. Turn on `$log_requests` to see exactly what the game server sends. |
 | `ExpiredAuth` errors | The server's clock is wrong. Login tokens expire after about 12 minutes, so sync the clock (NTP). |
 
 ## Development
