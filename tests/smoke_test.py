@@ -10,7 +10,10 @@ Environment:
   WEB_DIR   path to web/, used to generate auth tokens (default ../web)
   DB_CMD    command that runs SQL read from stdin against the stats database,
             e.g. "mysql -h127.0.0.1 -uroot -proot bf2142"
+  ADMIN_USER, ADMIN_PASS
+            web admin login; the admin checks are skipped when not set
 """
+import http.cookiejar
 import os
 import re
 import shlex
@@ -193,6 +196,98 @@ def test_tokens():
           "old game-server token still accepted")
     check(request("getleaderboard.aspx", {"auth": old_client, "pos": 1, "after": 17, "type": "overallscore"})
           .startswith("ExpiredAuth"), "expired token rejected by leaderboard")
+    check(request("getawardsinfo.aspx", {"auth": old_client}).startswith("ExpiredAuth"),
+          "expired token rejected by awards")
+    check(not request("getunlocksinfo.aspx", {"auth": old_client}).startswith("ExpiredAuth"),
+          "unlock screen still accepts a 1000s-old token")
+    check(request("getunlocksinfo.aspx", {"auth": token(ALPHA, 0, 2000)}).startswith("ExpiredAuth"),
+          "unlock screen rejects a 2000s-old token")
+    body = request("getunlocksinfo.aspx", {"auth": "garbage"})
+    check(not body.startswith("O\n"), "malformed token gets no player data")
+
+
+def test_dns_update():
+    print("DNS-registered game servers (dnsch.php)")
+    sql("DELETE FROM servers WHERE prefix = 'SMOKE';"
+        "INSERT INTO servers (ip, authorised, prefix, bydnsname, dnshost) VALUES ('10.255.255.1', 1, 'SMOKE', 1, 'localhost');")
+    try:
+        body = request("dnsch.php")
+        status = 200
+    except urllib.error.HTTPError as e:
+        status = e.code
+    if status == 403:
+        # Behind Docker's network the request doesn't come from localhost
+        check(True, "refuses requests that aren't from this machine")
+    else:
+        rows = sql("SELECT ip FROM servers WHERE prefix = 'SMOKE'")
+        check(status == 200 and "Done" in body, "runs")
+        check(rows and rows[0][0] == "127.0.0.1", "server IP updated from its DNS name")
+    sql("DELETE FROM servers WHERE prefix = 'SMOKE';")
+
+
+class Admin:
+    """Browser-like client for admin.php: keeps the session cookie and CSRF token."""
+
+    def __init__(self):
+        self.opener = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+        self.csrf = ""
+
+    def open(self, params=None, form=None, csrf=True):
+        url = BASE_URL + "/admin.php"
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+        data = None
+        if form is not None:
+            form = dict(form)
+            if csrf:
+                form["csrf"] = self.csrf
+            data = urllib.parse.urlencode(form).encode()
+        try:
+            with self.opener.open(url, data=data, timeout=30) as resp:
+                status, body = resp.status, resp.read().decode("latin-1")
+        except urllib.error.HTTPError as e:
+            status, body = e.code, e.read().decode("latin-1")
+        m = re.search(r'name="csrf" value="([0-9a-f]+)"', body)
+        if m:
+            self.csrf = m.group(1)
+        return status, body
+
+
+def test_admin():
+    user, password = os.environ.get("ADMIN_USER"), os.environ.get("ADMIN_PASS")
+    if not user or not password:
+        print("Web admin: skipped (set ADMIN_USER and ADMIN_PASS)")
+        return
+    print("Web admin (admin.php)")
+    admin = Admin()
+    status, body = admin.open()
+    check(status == 200 and "formPassword" in body and admin.csrf, "login page with CSRF token")
+
+    status, _ = admin.open(form={"action": "login", "formUser": user, "formPassword": password}, csrf=False)
+    check(status == 400, "form without CSRF token rejected")
+
+    status, body = admin.open(form={"action": "login", "formUser": user, "formPassword": "wrong"})
+    check("Wrong username or password" in body, "wrong password rejected")
+
+    status, body = admin.open(form={"action": "login", "formUser": user, "formPassword": password})
+    check("action=logout" in body and "Edit Config" in body, "logged in, full menu shown")
+
+    status, body = admin.open({"task": "serverinfo"})
+    check(status == 200 and "Server List" in body and "127.0.0.1" in body, "server info lists game servers")
+
+    status, body = admin.open({"task": "editconfig"})
+    check(status == 200 and "cfg__db_host" in body, "config form")
+
+    status, body = admin.open(form={"action": "process", "task": "saveconfig", "cfg__stats_players_max": "128"})
+    check(status == 200 and "Saving Config" in body, "config saved")
+    status, body = admin.open({"task": "editconfig"})
+    check(re.search(r'name="cfg__stats_players_max"[^>]*value="128"', body), "saved value shown")
+
+    status, body = admin.open({"action": "logout"})
+    check("formPassword" in body and "action=logout" not in body, "logged out")
+    status, body = admin.open(form={"action": "login", "formUser": user, "formPassword": password})
+    check("action=logout" in body, "can log in again after logging out")
 
 
 def test_no_request_dumps():
@@ -225,6 +320,8 @@ if __name__ == "__main__":
     test_endpoints()
     test_rank_notification()
     test_tokens()
+    test_dns_update()
+    test_admin()
     test_no_request_dumps()
     if failures:
         print("\n%d check(s) failed" % len(failures))

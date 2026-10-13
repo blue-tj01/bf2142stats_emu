@@ -23,6 +23,11 @@ DEFINE('_CODE_VER', '1.10.1');
 function isIPInNet($ip, $net, $mask) {
     $lnet = ip2long($net);
     $lip = ip2long($ip);
+    // Not IPv4 (e.g. an IPv6 client): ip2long() fails for both sides and the
+    // all-zero results below would otherwise compare as a match
+    if ($lnet === false || $lip === false || !is_numeric($mask) || $mask < 0 || $mask > 32) {
+        return false;
+    }
     $binnet = str_pad(decbin($lnet), 32, 0, STR_PAD_LEFT);
     $firstpart = substr($binnet, 0, $mask);
     $binip = str_pad(decbin($lip), 32, 0, STR_PAD_LEFT);
@@ -110,21 +115,22 @@ function getDbVer() {
         echo 1;
         // DB Server error
     } else {
-        $query = "SELECT ver FROM _version WHERE part='database'";
+        $query = "SELECT dbver FROM _version ORDER BY dbdate DESC LIMIT 1";
         if (!mysql_select_db($cfg->get('db_name'), $connection)) {
             // DB Error
         } else {
             $result = mysql_query($query);
-//			if ($result && mysql_num_rows($result)) {
-            $row = mysql_fetch_array($result);
-            $curver = $row['ver'];
-//			} else {
-//				$query = "SHOW TABLES LIKE 'player'";
-//				$result = mysql_query($query);
-//				if (mysql_num_rows($result)) {
-//					$curver = '1.2+';
-//				}
-//			}
+            $row = $result ? mysql_fetch_array($result) : false;
+            if ($row) {
+                $curver = $row['dbver'];
+            } else {
+                // Databases created from bf2142.sql before it recorded a
+                // version: the stats tables exist, so it is the current schema
+                $result = mysql_query("SHOW TABLES LIKE 'playerprogress'");
+                if ($result && mysql_num_rows($result)) {
+                    $curver = $cfg->get('db_expected_ver');
+                }
+            }
         }
     }
     // Close database connection
@@ -195,10 +201,11 @@ function checkSQLResult($result, $query) {
 function get_ext_ip() {
 
     $url = 'http://this-ip.com/';
-    $get = implode("\n", getPageContents($url));
-    preg_match('/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/', $get, $ip);
-    $var_ipaddr = $ip[0];
-    return $var_ipaddr;
+    $lines = getPageContents($url);
+    if (!$lines || !preg_match('/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/', implode("\n", $lines), $ip)) {
+        return '';
+    }
+    return $ip[0];
 }
 
 function getPageContents($url) {
@@ -271,21 +278,28 @@ class Config {
         $cfg .= "* to change values.                    *\n";
         $cfg .= "***************************************/\n";
         foreach ($this->data as $key => $val) {
-            if (is_numeric($val)) {
-                $cfg .= "\$$key = " . $val . ";\n";
-            } elseif ($key == 'admin_hosts' || $key == 'game_hosts' || $key == 'stats_local_pids') {
+            // Keys and values are written as PHP code, so only allow plain
+            // variable names and always quote values with var_export()
+            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $key)) {
+                continue;
+            }
+            if ($key == 'admin_hosts' || $key == 'game_hosts' || $key == 'stats_local_pids') {
                 if (!is_array($val)) {
                     $val_r = explode("\n", $val);
                 } else {
                     $val_r = $val;
                 }
-                $val_s = "";
+                $items = array();
                 foreach ($val_r as $item) {
-                    $val_s .= "'" . trim($item) . "',";
+                    if (trim($item) !== '') {
+                        $items[] = var_export(trim($item), true);
+                    }
                 }
-                $cfg .= "\$$key = array(" . substr($val_s, 0, -1) . ");\n";
+                $cfg .= "\$$key = array(" . implode(',', $items) . ");\n";
+            } elseif (is_numeric($val)) {
+                $cfg .= "\$$key = " . var_export($val + 0, true) . ";\n";
             } else {
-                $cfg .= "\$$key = '" . addslashes($val) . "';\n";
+                $cfg .= "\$$key = " . var_export((string) $val, true) . ";\n";
             }
         }
         $cfg .= "?>";
@@ -302,6 +316,10 @@ class Config {
             }
         } else {
             if (@file_put_contents($this->configFile, $cfg)) {
+                // Otherwise OPcache can keep serving the old settings for a while
+                if (function_exists('opcache_invalidate')) {
+                    @opcache_invalidate($this->configFile, true);
+                }
                 return true;
             } else {
                 return false;

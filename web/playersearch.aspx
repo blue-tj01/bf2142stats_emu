@@ -13,17 +13,8 @@ require_once("ea_support.php");
 require_once('include/_ccconfig.php');
 require_once('include/compat.php');
 
-$bfcoding  = new ea_stats();
-$code = $bfcoding->str2hex($bfcoding->DefDecryptBlock($bfcoding->getBase64Decode($getAUTH)));
-if ((hexdec($code[6].$code[7].$code[4].$code[5].$code[2].$code[3].$code[0].$code[1])+708) < $timestamp) {	echo "ExpiredAuth: Expired authentication token";exit;	}
-/*
-0  4C524F45 7
-8  64000000 15
-16 9703F104 23
-24 0000     27
-28 87C3     31
-*/
-$authPID = hexdec($code[22].$code[23].$code[20].$code[21].$code[18].$code[19].$code[16].$code[17]);
+$token = requireFreshAuthToken($getAUTH, 708);
+$authPID = $token['pid'];
 
 //if(isset($_GET["pid"]) AND $_GET["pid"] != "") {	$authPID = $_GET["pid"];	}
 if(isset($_GET["nick"]) AND $_GET["nick"] != "") {	$nick = $_GET["nick"];	} else {	$nick = '%2a';	}

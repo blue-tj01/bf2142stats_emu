@@ -211,10 +211,10 @@ CREATE TABLE IF NOT EXISTS `servers` (
   `prefix` varchar(30) NOT NULL DEFAULT '',
   `name` varchar(100) DEFAULT NULL,
   `port` int(6) unsigned DEFAULT '0',
-  `gport` int(11) NOT NULL,
+  `gport` int(11) NOT NULL DEFAULT '0',
   `queryport` int(6) unsigned NOT NULL DEFAULT '0',
-  `bydnsname` int(11) NOT NULL,
-  `dnshost` int(11) NOT NULL,
+  `bydnsname` int(11) NOT NULL DEFAULT '0',
+  `dnshost` varchar(255) NOT NULL DEFAULT '',
   `lastupdate` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
   PRIMARY KEY (`id`),
   UNIQUE KEY `ip-prefix-unq` (`ip`,`prefix`)

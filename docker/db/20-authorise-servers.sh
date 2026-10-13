@@ -14,5 +14,5 @@ for entry in "${entries[@]}"; do
     fi
     echo "Authorising game server: $entry"
     mariadb -uroot -p"$MARIADB_ROOT_PASSWORD" "$MARIADB_DATABASE" -e \
-        "INSERT INTO servers (ip, authorised, prefix, gport, bydnsname, dnshost) VALUES ('$entry', 1, 'BF2142', 0, 0, 0);"
+        "INSERT INTO servers (ip, authorised, prefix) VALUES ('$entry', 1, 'BF2142');"
 done

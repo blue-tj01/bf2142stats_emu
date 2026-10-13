@@ -77,28 +77,14 @@ require_once("ea_support.php");
 require_once('include/_ccconfig.php');
 require_once('include/compat.php');
 
-$bfcoding = new ea_stats();
-$code = $bfcoding->str2hex($bfcoding->DefDecryptBlock($bfcoding->getBase64Decode($auth)));
-/*
-  0  4C524F45 7
-  8  64000000 15
-  16 9703F104 23
-  24 0000     27
-  28 87C3     31
- */
-$authPID = hexdec($code[22] . $code[23] . $code[20] . $code[21] . $code[18] . $code[19] . $code[16] . $code[17]);
-if (hexdec($code[26] . $code[27] . $code[24] . $code[25]) == 1) {
-    $clType = 'server';
-    $isServer = true;
-} else {
-    $clType = 'client';
-    $isServer = false;
-}
+$token = decodeAuthToken($auth);
+$authPID = $token['pid'];
+$clType = $token['clType'];
+$isServer = $token['isServer'];
 // Player tokens expire like on the other endpoints. Game-server tokens are
 // kept for a whole session and web requests reuse one, so they are exempt.
-if (!$isServer AND $getweb != 1 AND (hexdec($code[6] . $code[7] . $code[4] . $code[5] . $code[2] . $code[3] . $code[0] . $code[1]) + 708) < $timestamp) {
-    echo "ExpiredAuth: Expired authentication token";
-    exit;
+if (!$isServer AND $getweb != 1 AND authTokenExpired($token, 708)) {
+    sendExpiredAuth();
 }
 
 $connection = @mysql_connect($db_host, $db_user, $db_pass);

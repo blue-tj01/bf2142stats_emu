@@ -95,12 +95,14 @@ Settings in `.env`:
 | `DB_ROOT_PASS` | MariaDB root password |
 | `AUTHORISED_SERVERS` | Comma-separated game server IPs or `x.x.x.x/nn` subnets allowed to submit round stats |
 | `LOG_REQUESTS` | `1` to save every game request and round snapshot for debugging (see [Logs](#logs)) |
+| `ADMIN_USER`, `ADMIN_PASS` | Login for the [web admin](#web-admin) at `/admin.php`; login is disabled while either is empty |
+| `ADMIN_HOSTS` | Comma-separated IPs or subnets allowed to open the web admin. Your browser reaches the container through Docker's network, so on Linux use `172.16.0.0/12` to allow this machine |
 | `WEB_PORT`, `DB_PORT` | Host ports for the web server and database |
 
 > [!IMPORTANT]
 > `AUTHORISED_SERVERS` is only applied when the database is first created. To add a server later:
 > ```sh
-> docker compose exec db mariadb -uroot -p bf2142 -e "INSERT INTO servers (ip, authorised, prefix, gport, bydnsname, dnshost) VALUES ('1.2.3.4', 1, 'BF2142', 0, 0, 0)"
+> docker compose exec db mariadb -uroot -p bf2142 -e "INSERT INTO servers (ip, authorised, prefix) VALUES ('1.2.3.4', 1, 'BF2142')"
 > ```
 > On Docker Desktop (Windows/macOS), requests can reach the container from Docker's internal gateway instead of the game server's real IP. If round stats are rejected, check `docker compose logs web` for the IP that was refused and authorise that.
 
@@ -159,6 +161,30 @@ The database is kept in the `db-data` volume, and logs in `web-logs` and `web-de
 
 Paths are relative to the web root. Request logs contain players' login tokens, so keep them outside the web root and turn them off again when you're done.
 
+#### Web admin
+
+`admin.php` is a small admin panel: edit the config, see which game servers are authorised, import saved round logs and clear the stats.
+
+1. Set `$admin_user` and `$admin_pass` in `_ccconfig.php` (or `ADMIN_USER` / `ADMIN_PASS` with Docker). Logging in is disabled while either is empty.
+2. Open `http://your-server/admin.php` **from the server itself**. To open it from another machine, add that machine's IP or subnet to `$admin_hosts` (`ADMIN_HOSTS` with Docker); everyone else gets "Access denied".
+
+Five failed logins from one address lock it out for 15 minutes. Several menu entries (backups, bans, merging players, …) are still marked "Under Construction".
+
+#### Game servers on a dynamic IP
+
+Round stats are only accepted from IPs in the `servers` table. For a game server whose IP changes, register it by DNS name and let `dnsch.php` keep its IP current:
+
+```sql
+-- Use the server's current IP; dnsch.php updates it when the name resolves elsewhere
+INSERT INTO servers (ip, authorised, prefix, bydnsname, dnshost)
+VALUES ('203.0.113.10', 1, 'BF2142', 1, 'mygameserver.example.com');
+```
+
+> [!WARNING]
+> Never put `0.0.0.0` in the `servers` table: it matches every address, so anyone could submit stats.
+
+Then run `php /path/to/web/dnsch.php` every few minutes from cron or Task Scheduler (with Docker: `docker compose exec web php dnsch.php`). Over HTTP it only answers requests from the server itself.
+
 #### Upgrading an existing install
 
 `web/include/_ccconfig.php` is no longer part of the repository. **Back it up before you `git pull`**, then put it back afterwards. Add these two lines to it if you want the request log setting:
@@ -169,6 +195,20 @@ $log_dir = '../logs/requests/';
 ```
 
 Old request dumps (`*.txt` files in the web root, such as `getplayerinfo.txt` and `sinthetixData.txt`) are no longer written and can be deleted.
+
+To use the [web admin](#web-admin), add these lines too (older configs have them commented out with `#`):
+
+```php
+$admin_user = 'choose-a-username';
+$admin_pass = 'choose-a-password';
+$admin_hosts = array('localhost');
+```
+
+To register game servers by DNS name, the `servers.dnshost` column must hold text (older schemas made it a number):
+
+```sql
+ALTER TABLE servers MODIFY dnshost varchar(255) NOT NULL DEFAULT '';
+```
 
 ### 4. Game server
 
@@ -226,6 +266,7 @@ The 1.51 executable has the server IP built in as `192.168.1.3`. Replace it with
 - Only game servers listed as `authorised` in the `servers` table can submit round stats.
 - Request logging is off by default. When it's on, the logs include players' login tokens, so keep `$log_dir` outside the web root. `.htaccess` also blocks `.txt`, `.log` and `.bak` files in the web root as a safety net.
 - Your database password lives only in `web/include/_ccconfig.php`, which git ignores.
+- `admin.php` only answers addresses in `$admin_hosts` (this machine by default), needs a login, and checks a per-session token on every form so other sites can't submit them for you.
 - The token format is EA's original, and its key is public in `ea_support.php`. Tokens are a convenience check, not real authentication.
 
 ## Troubleshooting

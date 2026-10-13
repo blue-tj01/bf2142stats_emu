@@ -61,11 +61,12 @@ jobs:
       - name: Load the schema and authorise this machine as a game server
         run: |
           $MYSQL < database/bf2142.sql
-          $MYSQL -e "INSERT INTO servers (ip, authorised, prefix, gport, bydnsname, dnshost) VALUES ('127.0.0.1', 1, 'BF2142', 0, 0, 0)"
+          $MYSQL -e "INSERT INTO servers (ip, authorised, prefix) VALUES ('127.0.0.1', 1, 'BF2142')"
       - name: Configure and start the stats server
         run: |
           cp web/include/_ccconfig.example.php web/include/_ccconfig.php
           DB_HOST=127.0.0.1 DB_NAME=bf2142 DB_USER=root DB_PASS=root \
+          ADMIN_USER=admin ADMIN_PASS=ci-admin \
             php docker/web/configure.php web/include/_ccconfig.php
           mkdir -p web/logs
           php -d log_errors=1 -d error_log="$PWD/php_errors.log" \
@@ -74,6 +75,8 @@ jobs:
         env:
           BASE_URL: http://127.0.0.1:8088
           DB_CMD: ${{ env.MYSQL }}
+          ADMIN_USER: admin
+          ADMIN_PASS: ci-admin
         run: python3 tests/smoke_test.py
       - name: Fail on PHP fatal errors
         if: always()
@@ -95,12 +98,15 @@ jobs:
           sed -i 's/^DB_PASS=.*/DB_PASS=ci-pass/; s/^DB_ROOT_PASS=.*/DB_ROOT_PASS=ci-root/; s/^WEB_PORT=.*/WEB_PORT=8080/' .env
           # Requests from the runner reach the container through Docker's network
           sed -i 's#^AUTHORISED_SERVERS=.*#AUTHORISED_SERVERS=127.0.0.1,172.16.0.0/12#' .env
+          sed -i 's/^ADMIN_USER=.*/ADMIN_USER=admin/; s/^ADMIN_PASS=.*/ADMIN_PASS=ci-admin/; s#^ADMIN_HOSTS=.*#ADMIN_HOSTS=172.16.0.0/12#' .env
       - name: Build and start
         run: docker compose up -d --build --wait
       - name: Run smoke test
         env:
           BASE_URL: http://127.0.0.1:8080
           DB_CMD: docker compose exec -T db mariadb -ubf2142 -pci-pass bf2142
+          ADMIN_USER: admin
+          ADMIN_PASS: ci-admin
         run: python3 tests/smoke_test.py
       - name: Fail on PHP fatal errors
         if: always()
