@@ -30,7 +30,7 @@ if ((hexdec($code[6].$code[7].$code[4].$code[5].$code[2].$code[3].$code[0].$code
 */
 $authPID = hexdec($code[22].$code[23].$code[20].$code[21].$code[18].$code[19].$code[16].$code[17]);
 
-if(isset($_GET["pid"]) AND $_GET["pid"] != "" AND $authPID != $_GET["pid"]) {	$authPID = $_GET["pid"];	}
+if(isset($_GET["pid"]) AND $_GET["pid"] != "" AND $authPID != $_GET["pid"]) {	$authPID = (int) $_GET["pid"];	}
 
 
 

@@ -27,6 +27,11 @@ if(isset($_GET["file"]) AND $_GET["file"] != "") {	$file = $_GET["file"];	} else
 // py/python/bf2/
 
 //echo file_get_contents("py/python/bf2/stats/".$file);
-echo file_get_contents("py/python/bf2/".$file);
+// Only serve .py files from py/python/bf2/ (blocks ../ path traversal)
+$file = basename($file);
+if (!preg_match('/^[A-Za-z0-9_]+\.py$/', $file)) {	echo "None: No error.";exit;	}
+if (is_file("py/python/bf2/".$file)) {
+	echo file_get_contents("py/python/bf2/".$file);
+}
 
 ?>

@@ -30,63 +30,95 @@ function checkSession() {
 	}
 }
 
+// Failed login tracking is kept server-side per client IP, so it can't be reset
+// by the client (previously the attempt counter was a hidden form field).
+define('_ADMIN_MAX_ATTEMPTS', 5);
+define('_ADMIN_LOCKOUT_SECS', 15 * 60);
+
+function loginAttemptsFile() {
+	$ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : 'unknown';
+	return rtrim(sys_get_temp_dir(), '/\\') . DIRECTORY_SEPARATOR . 'bf2142_admin_' . md5($ip);
+}
+
+function getLoginAttempts() {
+	$file = loginAttemptsFile();
+	if (!is_file($file)) {
+		return array('count' => 0, 'time' => 0);
+	}
+	$data = @unserialize(@file_get_contents($file));
+	if (!is_array($data) || !isset($data['count'], $data['time']) || $data['time'] < time() - _ADMIN_LOCKOUT_SECS) {
+		return array('count' => 0, 'time' => 0);
+	}
+	return $data;
+}
+
+function recordFailedLogin() {
+	$data = getLoginAttempts();
+	$data['count']++;
+	$data['time'] = time();
+	@file_put_contents(loginAttemptsFile(), serialize($data), LOCK_EX);
+	return $data['count'];
+}
+
+function clearFailedLogins() {
+	@unlink(loginAttemptsFile());
+}
+
+// Constant-time string comparison (hash_equals() needs PHP >= 5.6)
+function safeStrEquals($a, $b) {
+	$a = (string) $a;
+	$b = (string) $b;
+	if (strlen($a) != strlen($b)) {
+		return false;
+	}
+	$diff = 0;
+	for ($i = 0; $i < strlen($a); $i++) {
+		$diff |= ord($a[$i]) ^ ord($b[$i]);
+	}
+	return $diff === 0;
+}
+
 function processLogin() {
 	global $cfg;
-	// Initialize or retrieve the current values for the login variables
-	$loginAttempts = !isset($_POST['loginAttempts']) ? 1 : $_POST['loginAttempts'];
-	$formUser = !isset($_POST['formUser']) ? NULL : $_POST['formUser'];
-	$formPassword = !isset($_POST['formPassword']) ? NULL : $_POST['formPassword'];
-	
-	// Check Values
-	if(($formUser != $cfg->get('admin_user') ) || ($formPassword != $cfg->get('admin_pass') )) {
-		if ($loginAttempts == 0) { /* 3 strikes and they're out */
-			$_POST['loginAttempts'] = 1;
-			$auth = false;
-			return;
-		} else {
-			if ( $loginAttempts >= 3 ) {
-				echo "<blink><p align='center' style=\"font-weight:bold;font-size:170px;color:red;font-family:sans-serif;\">Log In<br>Failed.</p></blink>";		
-				exit;
-			} else {
-				$_POST['loginAttempts'] += 1;
-				return;
-			}
-		}
-	} elseif (($formUser == $cfg->get('admin_user') ) && ($formPassword == $cfg->get('admin_pass') )) {	// test for valid username and password
-		// Start Session
-		start_session();
-		$_SESSION['adminAuth'] = md5($cfg->get('admin_user').$cfg->get('admin_pass'));
-		$_SESSION['adminTime'] = time();
-		$SID = session_id();
-		$_POST['task'] = 'home';
-	} else {
-		$_POST['loginAttempts'] += 1;
+	$formUser = !isset($_POST['formUser']) ? '' : $_POST['formUser'];
+	$formPassword = !isset($_POST['formPassword']) ? '' : $_POST['formPassword'];
+
+	$attempts = getLoginAttempts();
+	if ($attempts['count'] >= _ADMIN_MAX_ATTEMPTS) {
+		ErrorLog("Admin login locked out (IP: " . $_SERVER['REMOTE_ADDR'] . ")", 0);
+		echo "<p align='center' style=\"font-weight:bold;color:red;font-family:sans-serif;\">Too many failed logins. Try again later.</p>";
+		exit;
+	}
+
+	// Refuse to log anyone in while no admin credentials are configured
+	if ($cfg->get('admin_user') == '' || $cfg->get('admin_pass') == ''
+		|| !safeStrEquals($formUser, $cfg->get('admin_user'))
+		|| !safeStrEquals($formPassword, $cfg->get('admin_pass'))) {
+		$count = recordFailedLogin();
+		ErrorLog("Admin login failed ({$count}/" . _ADMIN_MAX_ATTEMPTS . ") (IP: " . $_SERVER['REMOTE_ADDR'] . ")", 0);
 		return;
 	}
+
+	clearFailedLogins();
+	start_session();
+	session_regenerate_id(true);
+	$_SESSION['adminAuth'] = md5($cfg->get('admin_user').$cfg->get('admin_pass'));
+	$_SESSION['adminTime'] = time();
+	$_POST['task'] = 'home';
 }
 
 function processLogout() {
 	if (!checkSession()) {
 		return;
 	}
-	
-	// Reset Session Values
-	$_SESSION['adminAuth'] = '';
-	$_SESSION['adminTime'] = '';
-	
-	// If session exists, unregister all variables that exist and destroy session
-	$exists = false;
-	$session_array = explode(";",session_encode());
-	for ($x = 0; $x < count($session_array); $x++) {
-		$name  = substr($session_array[$x], 0, strpos($session_array[$x],"|")); 
-		if (session_is_registered($name)) {
-			session_unregister('$name');
-			$exists = true;
-		}
+
+	// Clear all session data and destroy the session
+	// (session_is_registered()/session_unregister() were removed in PHP 5.4)
+	$_SESSION = array();
+	if (ini_get('session.use_cookies')) {
+		$params = session_get_cookie_params();
+		setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
 	}
-	
-	if ($exists) {
-		session_destroy();
-	}
+	session_destroy();
 }
 ?>

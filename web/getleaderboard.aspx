@@ -22,7 +22,7 @@ if (isset($_GET["auth"]) AND $_GET["auth"] != "") {
     exit;
 }
 if (isset($_GET["pos"]) AND $_GET["pos"] != "" AND $_GET["pos"] >= 1) {
-    $getpos = $_GET["pos"];
+    $getpos = (int) $_GET["pos"];
 } else {
     errorcode(9981);
     exit;
@@ -33,7 +33,7 @@ if (isset($_GET["web"]) AND $_GET["web"] != "" AND $_GET["web"] == 1) {
     $getweb = false;
 }
 if (isset($_GET["ccFilter"]) AND $_GET["ccFilter"] != "") {
-    $ccFilter = $_GET["ccFilter"];
+    $ccFilter = preg_replace('/[^A-Za-z]/', '', $_GET["ccFilter"]);
 } else {
     $ccFilter = false;
 }
@@ -47,14 +47,14 @@ if ($ccFilter != false) {
 if (isset($_GET["after"]) AND $_GET["after"] != "" AND $_GET["after"] > 1) {
     if ($getweb != 1) {
         if ($_GET["after"] < 17) {
-            $getafter = $_GET["after"];
+            $getafter = (int) $_GET["after"];
         } else {
             $getafter = 18;
         }
 
     } else {
         if ($getweb == 1 AND $_GET["after"] < 50) {
-            $getafter = $_GET["after"];
+            $getafter = (int) $_GET["after"];
         } else {
             $getafter = 50;
         }
@@ -70,7 +70,7 @@ if (isset($_GET["type"]) AND $_GET["type"] != "") {
 }
 
 if (isset($_GET["id"]) AND $_GET["id"] != "") {
-    $id = $_GET["id"];
+    $id = (int) $_GET["id"];
 }
 
 
@@ -914,8 +914,8 @@ D\t" . $row3['rownumber'] . "\t" . $ic . "\t" . $row3['pid'] . "\t" . rawurldeco
 
   E 998 $ 4 $ ---> !pos=1 !after=17 !type=overallscore
 
-  if (isset($_GET["pos"]) AND $_GET["pos"] != "" AND $_GET["pos"] > 1) {	$getPOS = $_GET["pos"];	} else {	errorcode(998);exit;	}
-  if (isset($_GET["after"]) AND $_GET["after"] != "" AND $_GET["after"] < 18 AND $_GET["after"] > 0) {	$getafter = $_GET["after"];	} else {	errorcode(998);exit;	}
+  if (isset($_GET["pos"]) AND $_GET["pos"] != "" AND $_GET["pos"] > 1) {	$getPOS = (int) $_GET["pos"];	} else {	errorcode(998);exit;	}
+  if (isset($_GET["after"]) AND $_GET["after"] != "" AND $_GET["after"] < 18 AND $_GET["after"] > 0) {	$getafter = (int) $_GET["after"];	} else {	errorcode(998);exit;	}
   if (isset($_GET["type"]) AND $_GET["type"] != "") {	$gettype = $_GET["type"];	} else {	errorcode(998);exit;	}
 
   E 998 $ 4 $

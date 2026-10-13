@@ -76,7 +76,12 @@ if (mysql_num_rows($result0)) {
 //}
 @mysql_close($connection);
 
-
+// Check remote host is authorised before anything is written to disk
+if (!checkIpAuth($game_hosts)) {
+    $errmsg = "Unauthorised Access Attempted! (IP: " . $_SERVER['REMOTE_ADDR'] . ")";
+    ErrorLog($errmsg, 0);
+    die(_ERR_RESPONSE . $errmsg);
+}
 
 // Get URL POST data
 $rawdata = file_get_contents('php://input');
@@ -167,11 +172,6 @@ if (file_exists(chkPath($cfg->get('stats_logs')) . "bad/EOF")) {
 } else {
     mkdir(chkPath($cfg->get('stats_logs')) . "bad/EOF", 0777);
 }
-if (file_exists(chkPath($cfg->get('stats_logs')) . "bad/NOTAUTH")) {
-    
-} else {
-    mkdir(chkPath($cfg->get('stats_logs')) . "bad/NOTAUTH", 0777);
-}
 if (file_exists(chkPath($cfg->get('stats_logs')) . "bad/GAMEMOD")) {
     
 } else {
@@ -179,29 +179,6 @@ if (file_exists(chkPath($cfg->get('stats_logs')) . "bad/GAMEMOD")) {
 }
 // Check for Complete Snapshot data
 //print_r($data);
-// Check remote host is authorised (simple security check)
-if (!checkIpAuth($game_hosts)) {
-    $errmsg = "Unauthorised Access Attempted! (IP: " . $_SERVER['REMOTE_ADDR'] . ")";
-    ErrorLog($errmsg, 0);
-    $fn_src = chkPath($cfg->get('stats_logs')) . $stats_filename;
-    if (!file_exists(chkPath($cfg->get('stats_logs')) . "bad/NOTAUTH/" . $ip_s)) mkdir(chkPath($cfg->get('stats_logs')) . "bad/NOTAUTH/" . $ip_s, 0777);
-    $fn_dest = chkPath($cfg->get('stats_logs')) . "bad/NOTAUTH/" . $ip_s . "/" . $stats_filename;
-    if (file_exists($fn_src)) {
-        if (file_exists($fn_dest)) {
-            $errmsg = "SNAPSHOT Data File Already Exists, Over-writing! ({$fn_src} -> {$fn_dest})";
-            ErrorLog($errmsg, 2);
-        }
-        copy($fn_src, $fn_dest);
-        // Remove the original ONLY if it copies
-        if (file_exists($fn_dest)) {
-            unlink($fn_src);
-        }
-    }
-    $errmsg = "SNAPSHOT Data File Moved! ({$fn_src} -> {$fn_dest})";
-    ErrorLog($errmsg, 3);
-    die(_ERR_RESPONSE . $errmsg);
-}
-
 if ($badtime) {
     $errmsg = "SNAPSHOT Data has badtime!";
     ErrorLog($errmsg, 1);

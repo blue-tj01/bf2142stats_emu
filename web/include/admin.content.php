@@ -102,7 +102,6 @@ if (!checkSession()) {
 // **************
 
 function showLoginForm() {
-	$loginAttempts = !isset($_POST['loginAttempts']) ? 1 : $_POST['loginAttempts'];
 ?>
 	<div class="content-head">
 		<div class="desc-title">Login</div>
@@ -114,7 +113,6 @@ function showLoginForm() {
 	</div>
 	<div class="content" align="center">
 		<form method="POST" action="index.php" name="adminform">
-		<input type="hidden" name="loginAttempts" value="<?php echo $loginAttempts;?>">
 		<input type="hidden" name="task" value="<?php echo $task;?>">
 		<input type="hidden" name="action" value="login">
 		

@@ -1,0 +1,4 @@
+# Runtime request dumps / logs written by the web endpoints
+web/*.txt
+web/logs/
+web/include/_ccconfig.php.bak
