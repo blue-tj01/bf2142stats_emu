@@ -44,6 +44,7 @@ flowchart LR
 ```
 
 - **Fesl login server** (`fesl_login_server/`) handles accounts and logins in place of EA's FESL and GameSpy services.
+- **Open FESL server** (`fesl_server/`) is an open-source replacement for the closed login server, still in development. It handles FESL Hello, Login and GetObjectInventory so far, but not GameSpy yet. See its [README](fesl_server/README.md).
 - **Web stats server** (`web/`) answers the game's stats requests (`getplayerinfo.aspx`, `getleaderboard.aspx`, …) and receives round results from game servers (`bf2142statistics.php`).
 - **Game server Python scripts** (`python/`) collect each player's stats during a round and send them to the web server when it ends.
 - The game client and game server are pointed at your server through a patched executable or the Windows hosts file.
@@ -54,6 +55,7 @@ flowchart LR
 | --- | --- |
 | `database/bf2142.sql` | Database schema to import into MySQL / MariaDB |
 | `fesl_login_server/` | Login server (Windows) and its launch scripts |
+| `fesl_server/` | Open-source FESL server in development, with its protocol captures, the stcppipe capture proxy and tests ([README](fesl_server/README.md)) |
 | `web/` | PHP stats server; goes in your web server's document root |
 | `python/` | Stats scripts for the dedicated game server |
 | `exe_patch/` | `lpatch` and the patches for the dedicated server executable |
@@ -271,7 +273,7 @@ The 1.51 executable has the server IP built in as `192.168.1.3`. Replace it with
 - Your database password lives only in `web/include/_ccconfig.php`, which git ignores.
 - `admin.php` only answers addresses in `$admin_hosts` (this machine by default), needs a login, and checks a per-session token on every form so other sites can't submit them for you.
 - The token format is EA's original, and its key is public in `ea_support.php`. Tokens are a convenience check, not real authentication.
-- The Fesl login server is a closed binary with no source in this repository, so it can't be audited or fixed here. It stores account passwords in plain text, and the queries embedded in it appear to insert the account name directly into SQL. Keep MySQL local-only, don't reuse real passwords on it, and leave `-restore_srv` off. Replacing it with an open-source implementation is the long-term fix.
+- The Fesl login server is a closed binary with no source in this repository, so it can't be audited or fixed here. It stores account passwords in plain text, and the queries embedded in it appear to insert the account name directly into SQL. Keep MySQL local-only, don't reuse real passwords on it, and leave `-restore_srv` off. Replacing it with an open-source implementation is the long-term fix, and that work has started in [`fesl_server/`](fesl_server/README.md).
 
 ## Troubleshooting
 
@@ -289,7 +291,8 @@ The 1.51 executable has the server IP built in as `192.168.1.3`. Replace it with
 Every push and pull request runs [CI](.github/workflows/ci.yml):
 
 - a syntax check of all PHP files on PHP 7.4 – 8.3;
-- the end-to-end smoke test (`tests/smoke_test.py`) against MySQL 8.0 and MariaDB 10.11, and against the Docker Compose stack.
+- the end-to-end smoke test (`tests/smoke_test.py`) against MySQL 8.0 and MariaDB 10.11, and against the Docker Compose stack;
+- the open FESL server's tests: capture replays, a server end-to-end test, and the same tests under AddressSanitizer/UBSan, plus a build of stcppipe (see [`fesl_server/`](fesl_server/README.md#getting-started)).
 
 The smoke test uploads round snapshots like a game server, calls every game endpoint like a client, and checks the responses and the database. To run it locally against the Docker stack:
 
@@ -314,6 +317,9 @@ Not everything in this repository is the project's own work, and the GPL only co
 | Game server scripts (`python/`) | Based on the scripts that ship with EA's Battlefield 2142 dedicated server and on BF2Statistics; the original authors' terms apply. |
 | `cracked_exe/` | Modified Electronic Arts executables. **Not** covered by this project's license. |
 | `fesl_login_server/fesl_login_server.exe` | Third-party binary with no source or license in this repository. |
+| `fesl_server/` (open FESL server, tests, captures) | GPL v2 (this project). Imported from [2142master](https://github.com/blue-tj01/2142master) by Artyom Shcherbakov (Tema567) and contributors. |
+| `fesl_server/src/stcppipe.c` and its headers | By [Luigi Auriemma](http://aluigi.org), GPL v2 or later. |
+| `fesl_server/src/minini.*`, `minglue.h` | [minIni](https://www.compuphase.com/minini.htm) by CompuPhase, Apache 2.0 (not yet used by the server). |
 | `fesl_login_server/blat/` | [Blat](https://www.blat.net/), public domain. |
 | `exe_patch/` (`lpatch`) | By [Luigi Auriemma](http://aluigi.org). No license text is included in this repository. |
 

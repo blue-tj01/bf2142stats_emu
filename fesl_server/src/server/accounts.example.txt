@@ -1,0 +1,4 @@
+# FESL test accounts: one "name password user_id [status]" per line.
+# The status is active (default), disabled, banned or pending.
+# Passwords are stored in clear text, use this only for testing.
+Tema567 123456 10
