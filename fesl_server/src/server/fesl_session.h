@@ -34,6 +34,22 @@
 #define FESL_ERROR_BAD_PASSWORD     122
 #define FESL_ERROR_NO_ENTITLEMENT   3012    // GetEntitlementByBundle, as captured
 
+// account and soldier creation, from BF2142's messages as listed by openspy
+#define FESL_ERROR_FIELD            21      // errorContainer.0 names the field and why
+#define FESL_ERROR_NAME_TAKEN       160
+#define FESL_ERROR_TOO_MANY_SOLDIERS 163    // "You can only have four (4) active Soldiers"
+#define FESL_ERROR_NONE             182     // "no error", how openspy answers AddSubAccount
+
+// errorContainer.0.fieldError reasons
+#define FESL_FIELD_REQUIRED         1
+#define FESL_FIELD_TOO_SHORT        2
+#define FESL_FIELD_TOO_LONG         3
+#define FESL_FIELD_START_LETTER     4
+#define FESL_FIELD_INVALID          6
+
+#define FESL_MAX_SOLDIERS           4
+#define FESL_SOLDIER_NAME_SIZE      20      // playerprogress.nick is varchar(20)
+
 #define FESL_CHALLENGE_SIZE         8       // GameSpyPreAuth, like the captured answers
 #define FESL_TICKET_SIZE            90
 

@@ -10,7 +10,7 @@ This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj0
 > [!NOTE]
 > The patched game executables in [`cracked_exe/`](../cracked_exe) and the [`exe_patch/`](../exe_patch) patches for the dedicated server include aluigi's FESL certificate check remover. With them, the game accepts this server's self-signed certificate. The connection is still SSLv3, so build the server with `make ssl3`.
 
-> **Status: early development.** The protocols are being reverse engineered from captured traffic. The FESL server answers every request of the captured logins, from Hello to GameSpyPreAuth. GameSpy itself, and FESL requests the captures don't show (creating accounts or soldiers), are not implemented yet.
+> **Status: early development.** The protocols are being reverse engineered from captured traffic. The FESL server answers every request of the captured logins, from Hello to GameSpyPreAuth, and creates and removes accounts and soldiers. GameSpy itself is not implemented yet.
 
 ## Contents
 
@@ -30,7 +30,9 @@ This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj0
 - [x] FESL packet decoder and encoder, with tests that replay the captures
 - [x] FESL server: Hello, MemCheck, Login, GetAccount, GetObjectInventory and keep-alive Ping
 - [x] FESL unlock bundles, sub-accounts (soldiers) and GameSpy pre-auth
-- [ ] FESL account and soldier creation (AddAccount, AddSubAccount, ...)
+- [x] FESL account and soldier creation and removal (AddAccount, AddSubAccount, DisableSubAccount)
+- [ ] FESL account updates and recovery (UpdateAccount, GetCountryList, GetTos, SendAccountName, SendPassword)
+- [ ] GameSpy player rows for new soldiers (needs the `passwordenc` format `fesl_login_server.exe` uses)
 - [ ] GameSpy protocols and sub-accounts
 - [x] Accounts from the `account` table of the stats database (MySQL / MariaDB)
 - [ ] Other database backends (PostgreSQL, SQLite3)
@@ -88,13 +90,17 @@ To use the accounts of the stats database instead, the same `account` table `fes
 FESL_DB_PASS=yourpassword ./fesl_server -c cert.pem -dbhost 127.0.0.1 -dbname bf2142 -dbuser fesl
 ```
 
-The server reads the tables, and writes only the GameSpy pre-auth of a soldier (see GameSpyPreAuth below), so give it these rights:
+The server reads the tables; it writes new accounts and soldiers, removes soldiers, and saves the GameSpy pre-auth of a soldier. Give it these rights, and no more:
 
 ```sql
 CREATE USER 'fesl'@'localhost' IDENTIFIED BY 'yourpassword';
 GRANT SELECT ON bf2142.* TO 'fesl'@'localhost';
-GRANT UPDATE (challenge, authtoken) ON bf2142.gamespy_players TO 'fesl'@'localhost';
+GRANT INSERT ON bf2142.account TO 'fesl'@'localhost';
+GRANT INSERT, DELETE ON bf2142.subaccount TO 'fesl'@'localhost';
+GRANT UPDATE (challenge, authtoken), DELETE ON bf2142.gamespy_players TO 'fesl'@'localhost';
 ```
+
+Without the `INSERT` and `DELETE` rights, logins still work and creating accounts or soldiers answers error 99.
 
 | Option | Meaning |
 | --- | --- |
@@ -114,6 +120,12 @@ The server answers:
 - **GetEntitlementByBundle**, for the unlock bundles `REG-PC-BF2142-UNLOCK-1` to `3`: error 3012, "The customer has never had entitlement for this bundle.", word for word as captured.
 - **GetSubAccounts**, the soldiers of the account: the `subaccount` rows of its `profileid`, in id order (up to 16). An account from the accounts file has one soldier, itself, as in the capture.
 - **LoginSubAccount**, for one of those soldiers (case-insensitive name): a new `lkey`, the soldier's id as `profileId` and the account's as `userId`. Any other name gets error 101.
+- **AddAccount**, after Hello: a new row in `account` with the name, password, e-mail, country, date of birth, zip code and mail flags the game sends; the answer has the new `profileid` as `userId` and `profileId`. Each field is checked first; a bad one gets error 21 with BF2142's name for it (`Account.ScreenName`, `Account.Password`, `Account.EmailAddress`, `Account.Address.Country`, `Account.BirthDate`, `Account.Address.Zip`) and the reason as `fieldError` (1 required, 2 too short, 3 too long, 4 must begin with a letter, 6 invalid). A name already taken, in any case, gets error 160. The rules:
+  - names: 3 to 45 characters, starting with a letter, then letters, digits and `_ - . [ ]` (names are GameSpy nicks too, which can't contain `\`);
+  - passwords: 4 to 16 letters and digits, as the game's own error message says;
+  - e-mail: one `@` and a `.` after it, up to 45 characters; country: up to 3 letters or digits; a real date of birth from 1900.
+- **AddSubAccount**, after Login: a new soldier in `subaccount`, at most four per account (error 163, the game's "You can only have four (4) active Soldiers"). Soldier names follow the name rules, up to 20 characters (the stats' `playerprogress.nick`), and must not be used by any soldier or GameSpy player (error 160). The answer is `errorCode=182` ("no error"), as openspy, which works with BF2142, sends it.
+- **DisableSubAccount**, after Login: removes one of the account's soldiers (any other name gets error 101) and its `gamespy_players` row, as `fesl_login_server.exe` does. Its stats stay.
 - **GameSpyPreAuth**, after LoginSubAccount: a random `challenge` and `ticket`, the ticket the game then shows the GameSpy login. With the database they are also saved as `challenge` and `authtoken` of the soldier's `gamespy_players` row (`id` = the soldier's id), where the GameSpy login of `fesl_login_server.exe` looks for them. If that row is missing or can't be written, the server logs it and still answers, but that soldier's GameSpy login will fail.
 
 It also sends a Ping every 30 seconds and closes connections that stay silent for 3 intervals. Any other request gets a "Not implemented" error (`errorCode=99`).
@@ -130,6 +142,8 @@ Login errors:
 
 > [!NOTE]
 > - Passwords are stored in clear text, both in the accounts file and in the `account` table (as `fesl_login_server.exe` expects). Don't reuse real passwords.
+> - A soldier created by this server has no `gamespy_players` row yet, so `fesl_login_server.exe`'s GameSpy login won't accept it: how that server fills `passwordenc` isn't known. Soldiers created by `fesl_login_server.exe` work.
+> - The formats of AddAccount, AddSubAccount and DisableSubAccount come from [openspy-core](https://github.com/openspy/openspy-core), which serves BF2142; they aren't in our captures. openspy has no license, so only its protocol details are used, not its code.
 > - The name is passed to the database as a query parameter, never pasted into the SQL.
 > - Text from accounts (names, e-mails, zip codes) is sent with control characters and `%` escaped as `%XX`, so a stored value can't add fields to a packet.
 > - Codes 101 and 122 are used by the BFBC2 and NFS Carbon emulators, and the others were checked against the NFS Carbon client. None has been checked against BF2142.

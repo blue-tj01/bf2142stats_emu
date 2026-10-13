@@ -52,6 +52,22 @@ typedef bool my_bool;
 // player up by authtoken; gamespy_players.id is the sub-account id
 #define PREAUTH_QUERY       "UPDATE gamespy_players SET challenge = ?, authtoken = ? WHERE id = ?"
 
+// the name is only inserted when no account has it yet (case-insensitively,
+// by the table's collation); there is no unique key to rely on
+#define ADD_ACCOUNT_QUERY   "INSERT INTO account (account, password, email, countryCode, DOBYear, DOBMonth, " \
+                            "DOBDay, zipCode, eaMailFlag, thirdPartyMailFlag) " \
+                            "SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ? FROM DUAL " \
+                            "WHERE NOT EXISTS (SELECT 1 FROM account WHERE account = ?)"
+
+// soldier names are GameSpy nicks, unique among all players
+#define SUB_NAME_TAKEN_QUERY "SELECT (SELECT COUNT(*) FROM subaccount WHERE subaccount = ?) + " \
+                            "(SELECT COUNT(*) FROM gamespy_players WHERE nick = ?)"
+#define SUB_COUNT_QUERY     "SELECT COUNT(*) FROM subaccount WHERE profileid = ?"
+#define ADD_SUB_QUERY       "INSERT INTO subaccount (profileid, subaccount) VALUES (?, ?)"
+#define REMOVE_SUB_QUERY    "DELETE FROM subaccount WHERE id = ? AND profileid = ?"
+// like fesl_login_server.exe, which also deletes the soldier's GameSpy player
+#define REMOVE_PLAYER_QUERY "DELETE FROM gamespy_players WHERE id = ?"
+
 enum {  // result columns
     COL_ID, COL_NAME, COL_PASSWORD, COL_EMAIL, COL_COUNTRY, COL_DOB_YEAR, COL_DOB_MONTH,
     COL_DOB_DAY, COL_ZIP, COL_EA_MAIL, COL_THIRD_PARTY_MAIL, COLUMNS
@@ -290,6 +306,170 @@ quit:
     return ret;
 }
 
+// runs a statement with params; affected and insert_id may be NULL
+static int db_exec(db_store *db, const char *query, MYSQL_BIND *params,
+        unsigned long long *affected, unsigned long long *insert_id) {
+    MYSQL_STMT  *stmt;
+    int         ret = FESL_ACCOUNT_ERROR;
+
+    stmt = mysql_stmt_init(db->conn);
+    if(!stmt) return FESL_ACCOUNT_ERROR;
+    if(mysql_stmt_prepare(stmt, query, strlen(query)) ||
+       (params && mysql_stmt_bind_param(stmt, params)) ||
+       mysql_stmt_execute(stmt)) {
+        fprintf(stderr, "database: %s failed: %s\n", query, mysql_stmt_error(stmt));
+    } else {
+        if(affected)  *affected  = mysql_stmt_affected_rows(stmt);
+        if(insert_id) *insert_id = mysql_stmt_insert_id(stmt);
+        ret = FESL_ACCOUNT_FOUND;
+    }
+    mysql_stmt_close(stmt);
+    return ret;
+}
+
+// runs a query returning one number
+static int db_count(db_store *db, const char *query, MYSQL_BIND *params, unsigned long long *count) {
+    MYSQL_STMT  *stmt;
+    MYSQL_BIND  result;
+    my_bool     is_null = 0;
+    int         ret = FESL_ACCOUNT_ERROR;
+
+    *count = 0;
+    stmt = mysql_stmt_init(db->conn);
+    if(!stmt) return FESL_ACCOUNT_ERROR;
+    memset(&result, 0, sizeof(result));
+    result.buffer_type = MYSQL_TYPE_LONGLONG;
+    result.is_unsigned = 1;
+    result.buffer      = count;
+    result.is_null     = &is_null;
+    if(mysql_stmt_prepare(stmt, query, strlen(query)) ||
+       (params && mysql_stmt_bind_param(stmt, params)) ||
+       mysql_stmt_bind_result(stmt, &result) ||
+       mysql_stmt_execute(stmt) ||
+       mysql_stmt_fetch(stmt)) {
+        fprintf(stderr, "database: %s failed: %s\n", query, mysql_stmt_error(stmt));
+    } else {
+        if(is_null) *count = 0;
+        ret = FESL_ACCOUNT_FOUND;
+    }
+    mysql_stmt_close(stmt);
+    return ret;
+}
+
+typedef struct {
+    const fesl_account *acc;
+    uint32_t        *id;
+} add_account_args;
+
+static int op_add_account(db_store *db, void *arg) {
+    add_account_args *args = arg;
+    const fesl_account *acc = args->acc;
+    MYSQL_BIND      param[11];
+    unsigned long   len[5];
+    unsigned int    year = acc->dob_year,
+                    month = acc->dob_month,
+                    day = acc->dob_day,
+                    ea_mail = acc->ea_mail_flag,
+                    third_party = acc->third_party_mail_flag;
+    unsigned long long affected = 0,
+                    id = 0;
+    unsigned long   name_len2;
+    int             ret;
+
+    memset(param, 0, sizeof(param));
+    bind_param_string(&param[0], acc->name, &len[0]);
+    bind_param_string(&param[1], acc->password, &len[1]);
+    bind_param_string(&param[2], acc->email, &len[2]);
+    bind_param_string(&param[3], acc->country, &len[3]);
+    bind_uint(&param[4], &year);
+    bind_uint(&param[5], &month);
+    bind_uint(&param[6], &day);
+    bind_param_string(&param[7], acc->zip_code, &len[4]);
+    bind_uint(&param[8], &ea_mail);
+    bind_uint(&param[9], &third_party);
+    bind_param_string(&param[10], acc->name, &name_len2);
+
+    ret = db_exec(db, ADD_ACCOUNT_QUERY, param, &affected, &id);
+    if(ret != FESL_ACCOUNT_FOUND) return ret;
+    if(!affected) return FESL_ACCOUNT_EXISTS;
+    *args->id = (uint32_t)id;
+    printf("database: account %s created with id %u\n", acc->name, *args->id);
+    return FESL_ACCOUNT_FOUND;
+}
+
+typedef struct {
+    const fesl_account *acc;
+    const char      *name;
+    size_t          max;
+    fesl_sub_account *out;
+} add_sub_args;
+
+static int op_add_sub_account(db_store *db, void *arg) {
+    add_sub_args    *args = arg;
+    MYSQL_BIND      param[2];
+    unsigned long   len[2];
+    unsigned int    profileid = args->acc->user_id;
+    unsigned long long count = 0,
+                    id = 0;
+    int             ret;
+
+    // the checks and the insert run under the store's lock, so this server
+    // can't race itself; fesl_login_server.exe on the same database could
+    memset(param, 0, sizeof(param));
+    bind_param_string(&param[0], args->name, &len[0]);
+    bind_param_string(&param[1], args->name, &len[1]);
+    if((ret = db_count(db, SUB_NAME_TAKEN_QUERY, param, &count)) != FESL_ACCOUNT_FOUND) return ret;
+    if(count) return FESL_ACCOUNT_EXISTS;
+
+    memset(param, 0, sizeof(param));
+    bind_uint(&param[0], &profileid);
+    if((ret = db_count(db, SUB_COUNT_QUERY, param, &count)) != FESL_ACCOUNT_FOUND) return ret;
+    if(count >= args->max) return FESL_ACCOUNT_LIMIT;
+
+    memset(param, 0, sizeof(param));
+    bind_uint(&param[0], &profileid);
+    bind_param_string(&param[1], args->name, &len[0]);
+    if((ret = db_exec(db, ADD_SUB_QUERY, param, NULL, &id)) != FESL_ACCOUNT_FOUND) return ret;
+
+    memset(args->out, 0, sizeof(fesl_sub_account));
+    args->out->id = (uint32_t)id;
+    snprintf(args->out->name, sizeof(args->out->name), "%s", args->name);
+    // its gamespy_players row (needed by fesl_login_server.exe's GameSpy
+    // login) isn't created yet: how that server fills passwordenc is unknown
+    printf("database: sub-account %s created with id %u for account %u, without a gamespy_players row\n",
+        args->name, args->out->id, profileid);
+    return FESL_ACCOUNT_FOUND;
+}
+
+typedef struct {
+    const fesl_account *acc;
+    const fesl_sub_account *sub;
+} remove_sub_args;
+
+static int op_remove_sub_account(db_store *db, void *arg) {
+    remove_sub_args *args = arg;
+    MYSQL_BIND      param[2];
+    unsigned int    id = args->sub->id,
+                    profileid = args->acc->user_id;
+    unsigned long long affected = 0;
+    int             ret;
+
+    memset(param, 0, sizeof(param));
+    bind_uint(&param[0], &id);
+    bind_uint(&param[1], &profileid);
+    if((ret = db_exec(db, REMOVE_SUB_QUERY, param, &affected, NULL)) != FESL_ACCOUNT_FOUND) return ret;
+    if(!affected) return FESL_ACCOUNT_NOT_FOUND;
+
+    // the soldier is gone either way, a GameSpy player left behind is only logged
+    memset(param, 0, sizeof(param));
+    bind_uint(&param[0], &id);
+    if(db_exec(db, REMOVE_PLAYER_QUERY, param, NULL, NULL) != FESL_ACCOUNT_FOUND) {
+        fprintf(stderr, "database: the gamespy_players row %u of removed sub-account %s is left\n", id, args->sub->name);
+    }
+    printf("database: sub-account %s (%u) of account %u removed\n", args->sub->name, id, profileid);
+    return FESL_ACCOUNT_FOUND;
+}
+
 // runs op on the shared connection, a second time on a fresh connection if
 // the server restarted or dropped an idle connection
 static int db_run(db_store *db, int (*op)(db_store *, void *), void *arg) {
@@ -329,6 +509,25 @@ static int db_save_preauth(fesl_account_store *store, const fesl_sub_account *su
     return db_run(store->ctx, op_preauth, &args);
 }
 
+static int db_add_account(fesl_account_store *store, const fesl_account *acc, uint32_t *id) {
+    add_account_args args = { acc, id };
+
+    return db_run(store->ctx, op_add_account, &args);
+}
+
+static int db_add_sub_account(fesl_account_store *store, const fesl_account *acc, const char *name,
+        size_t max, fesl_sub_account *out) {
+    add_sub_args args = { acc, name, max, out };
+
+    return db_run(store->ctx, op_add_sub_account, &args);
+}
+
+static int db_remove_sub_account(fesl_account_store *store, const fesl_account *acc, const fesl_sub_account *sub) {
+    remove_sub_args args = { acc, sub };
+
+    return db_run(store->ctx, op_remove_sub_account, &args);
+}
+
 static void db_thread_end(fesl_account_store *store) {
     (void)store;
     mysql_thread_end();
@@ -362,6 +561,9 @@ int fesl_accounts_db_open(fesl_account_store *store, const fesl_db_config *confi
     store->find         = db_find;
     store->sub_accounts = db_sub_accounts;
     store->save_preauth = db_save_preauth;
+    store->add_account  = db_add_account;
+    store->add_sub_account = db_add_sub_account;
+    store->remove_sub_account = db_remove_sub_account;
     store->thread_end   = db_thread_end;
     store->ctx        = db;
     return 0;

@@ -757,6 +757,337 @@ static void test_sub_accounts(void) {
     fesl_accounts_free(&accounts);
 }
 
+// an in-memory store that can create accounts and soldiers
+typedef struct {
+    fesl_account    accounts[8];
+    size_t          naccounts;
+    struct {
+        uint32_t    owner;
+        fesl_sub_account sub;
+    }               subs[16];
+    size_t          nsubs;
+    uint32_t        next_id;
+    int             down;
+} mem_store;
+
+static int mem_find(fesl_account_store *store, const char *name, fesl_account *out) {
+    mem_store   *m = store->ctx;
+    size_t      i;
+
+    if(m->down) return FESL_ACCOUNT_ERROR;
+    for(i = 0; i < m->naccounts; i++) {
+        if(!strcasecmp(m->accounts[i].name, name)) {
+            *out = m->accounts[i];
+            return FESL_ACCOUNT_FOUND;
+        }
+    }
+    return FESL_ACCOUNT_NOT_FOUND;
+}
+
+static int mem_sub_accounts(fesl_account_store *store, const fesl_account *acc, fesl_sub_account *list, size_t max, size_t *count) {
+    mem_store   *m = store->ctx;
+    size_t      i;
+
+    *count = 0;
+    if(m->down) return FESL_ACCOUNT_ERROR;
+    for(i = 0; (i < m->nsubs) && (*count < max); i++) {
+        if(m->subs[i].owner == acc->user_id) list[(*count)++] = m->subs[i].sub;
+    }
+    return FESL_ACCOUNT_FOUND;
+}
+
+static int mem_add_account(fesl_account_store *store, const fesl_account *acc, uint32_t *id) {
+    mem_store       *m = store->ctx;
+    fesl_account    tmp;
+
+    if(m->down) return FESL_ACCOUNT_ERROR;
+    if(mem_find(store, acc->name, &tmp) == FESL_ACCOUNT_FOUND) return FESL_ACCOUNT_EXISTS;
+    m->accounts[m->naccounts] = *acc;
+    m->accounts[m->naccounts].user_id = *id = m->next_id++;
+    m->naccounts++;
+    return FESL_ACCOUNT_FOUND;
+}
+
+static int mem_add_sub(fesl_account_store *store, const fesl_account *acc, const char *name, size_t max, fesl_sub_account *out) {
+    mem_store   *m = store->ctx;
+    size_t      i,
+                n = 0;
+
+    if(m->down) return FESL_ACCOUNT_ERROR;
+    for(i = 0; i < m->nsubs; i++) {
+        if(!strcasecmp(m->subs[i].sub.name, name)) return FESL_ACCOUNT_EXISTS;
+        if(m->subs[i].owner == acc->user_id) n++;
+    }
+    if(n >= max) return FESL_ACCOUNT_LIMIT;
+    memset(out, 0, sizeof(*out));
+    out->id = m->next_id++;
+    strcpy(out->name, name);
+    m->subs[m->nsubs].owner = acc->user_id;
+    m->subs[m->nsubs].sub   = *out;
+    m->nsubs++;
+    return FESL_ACCOUNT_FOUND;
+}
+
+static int mem_remove_sub(fesl_account_store *store, const fesl_account *acc, const fesl_sub_account *sub) {
+    mem_store   *m = store->ctx;
+    size_t      i;
+
+    if(m->down) return FESL_ACCOUNT_ERROR;
+    for(i = 0; i < m->nsubs; i++) {
+        if((m->subs[i].owner == acc->user_id) && (m->subs[i].sub.id == sub->id)) {
+            m->subs[i] = m->subs[--m->nsubs];
+            return FESL_ACCOUNT_FOUND;
+        }
+    }
+    return FESL_ACCOUNT_NOT_FOUND;
+}
+
+#define NEW_ACCOUNT "TXN=AddAccount\nname=NewGuy\npassword=abc123\nemail=new@example.com\ncountryCode=US\n" \
+                    "zipCode=12345\nDOBDay=29\nDOBMonth=2\nDOBYear=2000\neaMailFlag=1\nthirdPartyMailFlag=0\n"
+
+// a field error 21: the field and the reason why
+static void check_field_reason(const packet_list *ans, uint32_t number, const char *txn, const char *field, const char *reason) {
+    CHECK(ans->count == 1);
+    if(ans->count != 1) return;
+    CHECK(ans->pkt[0].number == number);
+    CHECK_STR(fesl_txn(&ans->pkt[0]), txn);
+    CHECK_STR(fesl_get(&ans->pkt[0], "errorCode"), "21");
+    CHECK(fesl_get(&ans->pkt[0], "localizedMessage") != NULL);
+    CHECK_STR(fesl_get(&ans->pkt[0], "errorContainer.[]"), "1");
+    CHECK_STR(fesl_get(&ans->pkt[0], "errorContainer.0.fieldName"), field);
+    CHECK_STR(fesl_get(&ans->pkt[0], "errorContainer.0.fieldError"), reason);
+}
+
+// replaces "key=..." in an AddAccount request (or removes the field with value NULL)
+static void with_field(char *buf, size_t size, const char *key, const char *value) {
+    char        line[64];
+    const char  *p;
+    size_t      n;
+
+    snprintf(buf, size, "%s", NEW_ACCOUNT);
+    snprintf(line, sizeof(line), "\n%s=", key);
+    p = strstr(buf, line);
+    if(!p) return;
+    n = strcspn(p + 1, "\n") + 1;
+    memmove((char *)p, p + n, strlen(p + n) + 1);
+    if(value) snprintf(buf + strlen(buf), size - strlen(buf), "%s=%s\n", key, value);
+}
+
+static void check_field(fesl_session *s, const char *key, const char *value, const char *field, const char *reason) {
+    char        req[512];
+    packet_list ans;
+
+    with_field(req, sizeof(req), key, value);
+    CHECK(handle_one(s, "acct", 3, req, &ans) == FESL_SESSION_CONTINUE);
+    check_field_reason(&ans, 3, "AddAccount", field, reason);
+    if((ans.count != 1) || strcmp(fesl_get(&ans.pkt[0], "errorContainer.0.fieldError") ?: "", reason)) {
+        fprintf(stderr, "  for %s=%s\n", key, value ? value : "(missing)");
+    }
+    free_list(&ans);
+}
+
+static void test_account_creation(void) {
+    mem_store   m;
+    fesl_account_store store;
+    fesl_session s;
+    packet_list ans;
+    uint32_t    rnd = 1;
+    int         i;
+
+    memset(&m, 0, sizeof(m));
+    m.next_id = 500;
+    memset(&store, 0, sizeof(store));
+    store.ctx                = &m;
+    store.find               = mem_find;
+    store.sub_accounts       = mem_sub_accounts;
+    store.add_account        = mem_add_account;
+    store.add_sub_account    = mem_add_sub;
+    store.remove_sub_account = mem_remove_sub;
+
+    // AddAccount needs a Hello first
+    fesl_session_init(&s, &store, counter_random, &rnd);
+    CHECK(handle_one(&s, "acct", 1, NEW_ACCOUNT, &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 1, "AddAccount", "99");
+    free_list(&ans);
+    CHECK(handle_one(&s, "fsys", 2, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+
+    // each field is checked, the first bad one is named
+    check_field(&s, "name", NULL, "Account.ScreenName", "1");
+    check_field(&s, "name", "Ab", "Account.ScreenName", "2");
+    check_field(&s, "name", "A1234567890123456789012345678901234567890123456", "Account.ScreenName", "3");
+    check_field(&s, "name", "1abc", "Account.ScreenName", "4");
+    check_field(&s, "name", "ab\\cd", "Account.ScreenName", "6");
+    check_field(&s, "name", "ab cd", "Account.ScreenName", "6");
+    check_field(&s, "password", NULL, "Account.Password", "1");
+    check_field(&s, "password", "abc", "Account.Password", "2");
+    check_field(&s, "password", "abcdefghij1234567", "Account.Password", "3");
+    check_field(&s, "password", "abc_123", "Account.Password", "6");
+    check_field(&s, "email", NULL, "Account.EmailAddress", "1");
+    check_field(&s, "email", "no-at.example.com", "Account.EmailAddress", "6");
+    check_field(&s, "email", "a@b@example.com", "Account.EmailAddress", "6");
+    check_field(&s, "email", "a@nodot", "Account.EmailAddress", "6");
+    check_field(&s, "email", "a b@example.com", "Account.EmailAddress", "6");
+    check_field(&s, "email", "a\\b@example.com", "Account.EmailAddress", "6");
+    check_field(&s, "email", "a1234567890123456789012345678901234567@example.com", "Account.EmailAddress", "3");
+    check_field(&s, "countryCode", NULL, "Account.Address.Country", "1");
+    check_field(&s, "countryCode", "USAA", "Account.Address.Country", "3");
+    check_field(&s, "countryCode", "U-", "Account.Address.Country", "6");
+    check_field(&s, "DOBYear", NULL, "Account.BirthDate", "6");
+    check_field(&s, "DOBYear", "1899", "Account.BirthDate", "6");
+    check_field(&s, "DOBYear", "2001", "Account.BirthDate", "6");     // no 29 February in 2001
+    check_field(&s, "DOBMonth", "13", "Account.BirthDate", "6");
+    check_field(&s, "DOBDay", "0", "Account.BirthDate", "6");
+    check_field(&s, "DOBDay", "-1", "Account.BirthDate", "6");
+    check_field(&s, "DOBDay", "7x", "Account.BirthDate", "6");
+    check_field(&s, "zipCode", "a\\b", "Account.Address.Zip", "6");
+    CHECK(m.naccounts == 0);
+
+    // created as asked; the country may be a number, the zip code missing
+    {
+        char    req[512];
+
+        with_field(req, sizeof(req), "zipCode", NULL);
+        CHECK(handle_one(&s, "acct", 4, req, &ans) == FESL_SESSION_CONTINUE);
+        CHECK(ans.count == 1);
+        if(ans.count == 1) {
+            CHECK(!fesl_get(&ans.pkt[0], "errorCode"));
+            CHECK(ans.pkt[0].count == 3);
+            CHECK_STR(fesl_get(&ans.pkt[0], "userId"), "500");
+            CHECK_STR(fesl_get(&ans.pkt[0], "profileId"), "500");
+        }
+        free_list(&ans);
+    }
+    CHECK(m.naccounts == 1);
+    if(m.naccounts == 1) {
+        CHECK_STR(m.accounts[0].name, "NewGuy");
+        CHECK_STR(m.accounts[0].password, "abc123");
+        CHECK_STR(m.accounts[0].email, "new@example.com");
+        CHECK_STR(m.accounts[0].country, "US");
+        CHECK_STR(m.accounts[0].zip_code, "");
+        CHECK((m.accounts[0].dob_year == 2000) && (m.accounts[0].dob_month == 2) && (m.accounts[0].dob_day == 29));
+        CHECK((m.accounts[0].ea_mail_flag == 1) && (m.accounts[0].third_party_mail_flag == 0));
+    }
+
+    // the name is taken, in any case
+    {
+        char    req[512];
+
+        with_field(req, sizeof(req), "name", "NEWGUY");
+        CHECK(handle_one(&s, "acct", 5, req, &ans) == FESL_SESSION_CONTINUE);
+        check_error(&ans, "acct", 5, "AddAccount", "160");
+        free_list(&ans);
+    }
+    CHECK(m.naccounts == 1);
+
+    // soldiers need a Login, then up to four
+    CHECK(handle_one(&s, "acct", 6, "TXN=AddSubAccount\nname=Alpha\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 6, "AddSubAccount", "99");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 7, "TXN=Login\nname=newguy\npassword=abc123\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1 && !fesl_get(&ans.pkt[0], "errorCode"));
+    free_list(&ans);
+    for(i = 0; i < FESL_MAX_SOLDIERS; i++) {
+        char    req[64];
+
+        snprintf(req, sizeof(req), "TXN=AddSubAccount\nname=Soldier%d\n", i);
+        CHECK(handle_one(&s, "acct", 8, req, &ans) == FESL_SESSION_CONTINUE);
+        CHECK(ans.count == 1);
+        if(ans.count == 1) {
+            CHECK_STR(fesl_txn(&ans.pkt[0]), "AddSubAccount");
+            CHECK_STR(fesl_get(&ans.pkt[0], "errorCode"), "182");     // "no error"
+        }
+        free_list(&ans);
+    }
+    CHECK(m.nsubs == FESL_MAX_SOLDIERS);
+    CHECK(handle_one(&s, "acct", 9, "TXN=AddSubAccount\nname=OneTooMany\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 9, "AddSubAccount", "163");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 10, "TXN=AddSubAccount\nname=soldier1\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 10, "AddSubAccount", "160");      // taken, checked before the limit
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 11, "TXN=AddSubAccount\nname=Way2LongSoldierName21\n", &ans) == FESL_SESSION_CONTINUE);
+    check_field_reason(&ans, 11, "AddSubAccount", "Account.ScreenName", "3");    // longer than 20
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 12, "TXN=AddSubAccount\n", &ans) == FESL_SESSION_CONTINUE);
+    check_field_reason(&ans, 12, "AddSubAccount", "Account.ScreenName", "1");
+    free_list(&ans);
+
+    // the new soldiers are listed and can play
+    CHECK(handle_one(&s, "acct", 13, "TXN=GetSubAccounts\n", &ans) == FESL_SESSION_CONTINUE);
+    if(ans.count == 1) CHECK_STR(fesl_get(&ans.pkt[0], "subAccounts.[]"), "4");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 14, "TXN=LoginSubAccount\nname=Soldier2\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(s.sub_account && !strcmp(s.sub_account->name, "Soldier2"));
+    free_list(&ans);
+
+    // disabling: only the account's own soldiers; the one playing is logged out
+    CHECK(handle_one(&s, "acct", 15, "TXN=DisableSubAccount\nname=Nobody\n", &ans) == FESL_SESSION_CONTINUE);
+    check_field_error(&ans, "acct", 15, "DisableSubAccount", "101", "name");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 16, "TXN=DisableSubAccount\nname=soldier2\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1);
+    if(ans.count == 1) {
+        CHECK_STR(fesl_txn(&ans.pkt[0]), "DisableSubAccount");
+        CHECK(ans.pkt[0].count == 1);
+    }
+    free_list(&ans);
+    CHECK(m.nsubs == FESL_MAX_SOLDIERS - 1);
+    CHECK(!s.sub_account);
+    CHECK(handle_one(&s, "acct", 17, "TXN=AddSubAccount\nname=Replacement\n", &ans) == FESL_SESSION_CONTINUE);
+    if(ans.count == 1) CHECK_STR(fesl_get(&ans.pkt[0], "errorCode"), "182");    // room again
+    free_list(&ans);
+
+    // a store error is a system error
+    m.down = 1;
+    CHECK(handle_one(&s, "acct", 18, "TXN=AddSubAccount\nname=Whatever\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 18, "AddSubAccount", "99");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 19, "TXN=DisableSubAccount\nname=Soldier0\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 19, "DisableSubAccount", "99");
+    free_list(&ans);
+    m.down = 0;
+
+    // another account can't remove these soldiers
+    m.accounts[m.naccounts] = m.accounts[0];
+    strcpy(m.accounts[m.naccounts].name, "Other");
+    m.accounts[m.naccounts].user_id = 999;
+    m.naccounts++;
+    fesl_session_init(&s, &store, counter_random, &rnd);
+    CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 2, "TXN=Login\nname=Other\npassword=abc123\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 3, "TXN=DisableSubAccount\nname=Soldier0\n", &ans) == FESL_SESSION_CONTINUE);
+    check_field_error(&ans, "acct", 3, "DisableSubAccount", "101", "name");
+    free_list(&ans);
+    CHECK(m.nsubs == FESL_MAX_SOLDIERS);
+
+    // the accounts file can't create anything
+    {
+        fesl_accounts accounts;
+        fesl_account_store file;
+
+        CHECK(fesl_accounts_parse(&accounts, ACCOUNTS) == 0);
+        fesl_accounts_store_init(&file, &accounts);
+        fesl_session_init(&s, &file, counter_random, &rnd);
+        CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
+        free_list(&ans);
+        CHECK(handle_one(&s, "acct", 2, NEW_ACCOUNT, &ans) == FESL_SESSION_CONTINUE);
+        check_error(&ans, "acct", 2, "AddAccount", "99");
+        free_list(&ans);
+        CHECK(handle_one(&s, "acct", 3, "TXN=Login\nname=Tema567\npassword=123456\n", &ans) == FESL_SESSION_CONTINUE);
+        free_list(&ans);
+        CHECK(handle_one(&s, "acct", 4, "TXN=AddSubAccount\nname=Alpha\n", &ans) == FESL_SESSION_CONTINUE);
+        check_error(&ans, "acct", 4, "AddSubAccount", "99");
+        free_list(&ans);
+        CHECK(handle_one(&s, "acct", 5, "TXN=DisableSubAccount\nname=Tema567\n", &ans) == FESL_SESSION_CONTINUE);
+        check_error(&ans, "acct", 5, "DisableSubAccount", "99");
+        free_list(&ans);
+        fesl_accounts_free(&accounts);
+    }
+}
+
 static void test_store_errors(void) {
     fesl_account_store store = { .find = down_find, .sub_accounts = self_sub_accounts };
     fesl_session s;
@@ -847,6 +1178,7 @@ int main(int argc, char *argv[]) {
     test_store_errors();
     test_get_account();
     test_sub_accounts();
+    test_account_creation();
 
     snprintf(path, sizeof(path), "%s/d1/dump2_ssl.pcap", dir);
     test_replay(path, 1);
