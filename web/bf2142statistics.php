@@ -11,7 +11,6 @@ ob_start();
 
 
 
-$LOG = 1;
 function errorcode($errorcode=104) {
     $Out = "E\t" . $errorcode;
     $countOut = preg_replace('/[\t\n]/', '', $Out);
@@ -85,12 +84,9 @@ if (!checkIpAuth($game_hosts)) {
 
 // Get URL POST data
 $rawdata = file_get_contents('php://input');
-//$rawdata = file_get_contents('data.txt');
-if ($LOG) {
-@file_put_contents("logs/rawdata".time().".txt", $rawdata, FILE_APPEND);
-}
-//$rawdata = file_get_contents('sinthetixData.txt');
-file_put_contents("sinthetixData.txt", $rawdata);
+// Saved only when $log_requests is on (see include/requestlog.php)
+require_once('include/requestlog.php');
+logRequest('bf2142statistics', $rawdata);
 // Seperate data
 if ($rawdata) {
     $gooddata = explode('\\', $rawdata);
@@ -119,10 +115,6 @@ for ($x = 2; $x + 1 < count($gooddata); $x += 2) {
         $gooddata[$x + 1] = '0';
     }
     $data[$gooddata[$x]] = $gooddata[$x + 1];
-}
-//!print_r($data);
-if ($LOG) {
-@file_put_contents("logs/data".time().".txt", print_r($data,true), FILE_APPEND);
 }
 // Import Backend Awards Data
 require('include/data.awards.php');
@@ -985,12 +977,9 @@ if ($data['pc'] >= $cfg->get('stats_players_min') && $globals['roundtime'] >= $c
                         $query = "UPDATE playerprogress SET " . rtrim($query3p, ",") . " WHERE `pid`='" . $data["pid_$x"] . "'";
                     }
                     $res = mysql_query($query);
-			if (!$res) {
-if ($LOG) {
-@file_put_contents("logs/error".time().".txt", $query."
-".mysql_error(), FILE_APPEND);
-}
-}
+                    if (!$res) {
+                        ErrorLog(mysql_error() . ' Query String: ' . $query, 1);
+                    }
 
 
                 }
@@ -1474,9 +1463,6 @@ function checkBackendAwards() {
 }
 // The buffer is sent to the game server when the script ends; echoing it
 // here as well sent the whole response twice.
-$string = ob_get_contents();
-if ($LOG) {
-@file_put_contents("logs/output".time().".txt", $string, FILE_APPEND);
-}
+logRequest('bf2142statistics-response', ob_get_contents());
 
 ?>

@@ -3,12 +3,8 @@
 $timestamp = time();
 $version = 115;
 
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . "=" . $val . "&";
-}
-file_put_contents('clearranknotification.txt', $str);
+require_once('include/requestlog.php');
+logRequest('clearranknotification');
 //$_GET['auth'] = "2kug7VmGH5Tn5kUda1dNqw__";
 
 if (isset($_GET["auth"]) AND $_GET["auth"] != "") {

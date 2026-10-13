@@ -13,12 +13,8 @@ $	10	$
 
 */
 
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . ": " . $val . "\n";
-}
-file_put_contents('selectunlock.txt', $str);
+require_once('include/requestlog.php');
+logRequest('selectunlock');
 //auth=qRyUw3ZNP97C2jeGFJhJ3Q__&uid=311&gsa=PRiCE5WaOm010xMpYD7Tfb__&
 //$_GET['auth'] = "qRyUw3ZNP97C2jeGFJhJ3Q__";
 //$_GET['uid'] = "311";

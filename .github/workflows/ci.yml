@@ -64,6 +64,7 @@ jobs:
           $MYSQL -e "INSERT INTO servers (ip, authorised, prefix, gport, bydnsname, dnshost) VALUES ('127.0.0.1', 1, 'BF2142', 0, 0, 0)"
       - name: Configure and start the stats server
         run: |
+          cp web/include/_ccconfig.example.php web/include/_ccconfig.php
           DB_HOST=127.0.0.1 DB_NAME=bf2142 DB_USER=root DB_PASS=root \
             php docker/web/configure.php web/include/_ccconfig.php
           mkdir -p web/logs

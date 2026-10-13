@@ -1,11 +1,7 @@
 <?php
 
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . "=" . $val . "&";
-}
-file_put_contents('getplayerprogress.txt', $str);
+require_once('include/requestlog.php');
+logRequest('getplayerprogress');
 //auth=nhZmH7Y40dG3y1zlzeChuw__&mode=point&scale=game&gsa=]4X9k3ZC8ROSg9QjBai6Ud__&
 //$_GET['auth'] = "WA5n0yAf]7Qudv[QMwBFiA__";
 //$_GET['mode'] = "role"; 

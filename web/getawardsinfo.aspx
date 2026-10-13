@@ -2,12 +2,8 @@
 
 $timestamp = time();
 
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . "=" . $val . "&";
-}
-file_put_contents('getawardsinfo.txt', $str);
+require_once('include/requestlog.php');
+logRequest('getawardsinfo');
 //$_GET['auth'] = "CLKUKGQ]xBOzSu7omJPsGw__";
 
 if(isset($_GET["auth"]) AND $_GET["auth"] != "") {	$auth = $_GET["auth"];	} else {	echo "None: No error.";exit;	}

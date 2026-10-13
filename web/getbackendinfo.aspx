@@ -3,12 +3,8 @@
 $timestamp = time();
 //$serverIP = $_SERVER["SERVER_ADDR"];
 
-$r = $_REQUEST;
-$str = "";
-foreach ($r as $id => $val) {
-    $str.=$id . "=" . $val . "&";
-}
-file_put_contents('getbackendinfo.txt', $str);
+require_once('include/requestlog.php');
+logRequest('getbackendinfo');
 
 if (isset($_SERVER["REMOTE_ADDR"]) AND $_SERVER["REMOTE_ADDR"] != "") {
 	$clIP = $_SERVER["REMOTE_ADDR"];
