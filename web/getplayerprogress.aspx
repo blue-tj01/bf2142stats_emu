@@ -40,7 +40,7 @@ if ((hexdec($code[6].$code[7].$code[4].$code[5].$code[2].$code[3].$code[0].$code
 28 87C3     31
 */
 $authPID = hexdec($code[22].$code[23].$code[20].$code[21].$code[18].$code[19].$code[16].$code[17]);
-if(isset($_GET["pid"]) AND $_GET["pid"] != "" AND $authPID != $_GET["pid"]) {	$authPID = $_GET["pid"];	}
+if(isset($_GET["pid"]) AND $_GET["pid"] != "" AND $authPID != $_GET["pid"]) {	$authPID = (int) $_GET["pid"];	}
 $connection = @mysql_connect($db_host, $db_user, $db_pass);
 
 @mysql_select_db($db_name);
@@ -54,7 +54,7 @@ $col_array = array(
 "role" => "date,cotime,sltime,smtime,lwtime,ttp",
 "flag" => "date,captures,assist,defend",
 "waccu" => "date,waccu",
-"wl" => "ate,wins,losses",
+"wl" => "date,wins,losses",
 "twsc" => "date,twsc",
 "sup" => "date,hls,rps,rvs,resp",
 );

@@ -44,12 +44,12 @@ if (!mysql_num_rows($result1) AND $game_unlocks != 1) {
 	errorcode(104);
 	exit;
 } else {
+	$row1 = mysql_fetch_array($result1);
 	if ($row1['rnk'] > ($row1['avcred']+$row1['unlc'])) {
-		$row1['avcred'] = (($row1['rnk']-$row1['unlc']-$row1['unavl'])+$row1['unavl']);
+		$row1['avcred'] = $row1['rnk']-$row1['unlc'];
 		$query9 = "UPDATE `playerprogress` SET unavl='".$row1['avcred']."' WHERE pid='".$authPID."'";
 		$result9 = mysql_query($query9) or die(mysql_error());
 	}
-	$row1 = mysql_fetch_array($result1);
 	$authPIDNick = rawurldecode($row1['subaccount']);
 	$authPIDAvcred = $row1['avcred'];
 }

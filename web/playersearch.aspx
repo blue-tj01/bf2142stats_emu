@@ -26,6 +26,7 @@ if ((hexdec($code[6].$code[7].$code[4].$code[5].$code[2].$code[3].$code[0].$code
 24 0000     27
 28 87C3     31
 */
+$authPID = hexdec($code[22].$code[23].$code[20].$code[21].$code[18].$code[19].$code[16].$code[17]);
 
 //if(isset($_GET["pid"]) AND $_GET["pid"] != "") {	$authPID = $_GET["pid"];	}
 if(isset($_GET["nick"]) AND $_GET["nick"] != "") {	$nick = $_GET["nick"];	} else {	$nick = '%2a';	}
@@ -43,16 +44,17 @@ H\tsearchpattern
 D\t".$nick."
 H\tpid\tnick";
 
-$query1 = "SELECT profileid, subaccount FROM `subaccount` WHERE subaccount REGEXP '".$nick."' LIMIT 20";
+$query1 = "SELECT profileid, subaccount FROM `subaccount` WHERE subaccount REGEXP '".mysql_real_escape_string($nick)."' LIMIT 20";
 $result1 = mysql_query($query1) or die(mysql_error());
 if (!mysql_num_rows($result1)) {
 	errorcode(104);
 	exit;
 } else {
-	$row1 = mysql_fetch_array($result1);
-	$pid = $row1['profileid'];
-	$nickname = rawurldecode($row1['subaccount']);
-	$Out .= "\nD\t".$pid."\t".$nickname;
+	while ($row1 = mysql_fetch_array($result1)) {
+		$pid = $row1['profileid'];
+		$nickname = rawurldecode($row1['subaccount']);
+		$Out .= "\nD\t".$pid."\t".$nickname;
+	}
 }
 /*
 O

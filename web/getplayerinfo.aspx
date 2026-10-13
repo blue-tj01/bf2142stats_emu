@@ -618,7 +618,7 @@ $aparm2 = explode(" ", $parm2);
           $Out .= $H.$D;
  		 ///////////////////////////////////////////////////////////////////////////////
 		 $parm1 = "pid nick tid gsco tt crpt fgm fm fe fv fk fw win los acdt lgdt brs etp-3 pdt pdtc";
-         $authPID = $_GET['pid'];
+         $authPID = (int) $_GET['pid'];
 		 $query1 = "SELECT * FROM `playerprogress` p
           LEFT JOIN `stats_a` a ON a.pid=p.pid
           LEFT JOIN `stats_e` e ON e.pid=p.pid
