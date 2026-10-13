@@ -4,6 +4,7 @@
 
 A self-hosted replacement for the shut-down EA / GameSpy backend of **Battlefield 2142**: login, ranked stats, leaderboards, awards and unlocks.
 
+[![CI](https://github.com/blue-tj01/bf2142stats_emu/actions/workflows/ci.yml/badge.svg)](https://github.com/blue-tj01/bf2142stats_emu/actions/workflows/ci.yml)
 [![License: GPL v2](https://img.shields.io/badge/license-GPL--2.0-blue.svg)](LICENSE)
 ![PHP 5.4 – 8.3](https://img.shields.io/badge/PHP-5.4%20%E2%80%93%208.3-777BB4?logo=php&logoColor=white)
 ![MySQL / MariaDB](https://img.shields.io/badge/MySQL%20%2F%20MariaDB-supported-4479A1?logo=mysql&logoColor=white)
@@ -18,6 +19,7 @@ A self-hosted replacement for the shut-down EA / GameSpy backend of **Battlefiel
 - [How it works](#how-it-works)
 - [Repository layout](#repository-layout)
 - [Requirements](#requirements)
+- [Quick start with Docker](#quick-start-with-docker)
 - [Setup](#setup)
   - [1. Database](#1-database)
   - [2. Fesl login server](#2-fesl-login-server)
@@ -26,6 +28,7 @@ A self-hosted replacement for the shut-down EA / GameSpy backend of **Battlefiel
   - [5. Game client](#5-game-client)
 - [Security notes](#security-notes)
 - [Troubleshooting](#troubleshooting)
+- [Development](#development)
 - [Credits and license](#credits-and-license)
 
 ## How it works
@@ -55,6 +58,8 @@ flowchart LR
 | `python/` | Stats scripts for the dedicated game server |
 | `exe_patch/` | `lpatch` and the patches for the dedicated server executable |
 | `cracked_exe/` | Patched client executables for game versions 1.25 and 1.51 |
+| `docker/`, `docker-compose.yml` | Docker setup for the web server and database |
+| `tests/` | End-to-end smoke test used by CI |
 
 ## Requirements
 
@@ -67,6 +72,38 @@ flowchart LR
 
 > [!NOTE]
 > Throughout this guide, replace `your.external.ip` with your server's public IP address.
+
+## Quick start with Docker
+
+Docker runs the **web stats server and the database** for you, on any OS. The Fesl login server, game server and game client still need the setup steps below.
+
+```sh
+cp .env.example .env     # set passwords and AUTHORISED_SERVERS (your game servers' IPs)
+docker compose up -d --build
+```
+
+This starts:
+
+- **web**: Apache with PHP 8.3 serving `web/` on port `80`, already configured to use the database.
+- **db**: MariaDB 10.11 with `database/bf2142.sql` loaded, published on `127.0.0.1:3306` so a Fesl login server on the same machine can use it.
+
+Settings in `.env`:
+
+| Variable | Purpose |
+| --- | --- |
+| `DB_NAME`, `DB_USER`, `DB_PASS` | Database and account used by the web server (and your Fesl login server) |
+| `DB_ROOT_PASS` | MariaDB root password |
+| `AUTHORISED_SERVERS` | Comma-separated game server IPs or `x.x.x.x/nn` subnets allowed to submit round stats |
+| `WEB_PORT`, `DB_PORT` | Host ports for the web server and database |
+
+> [!IMPORTANT]
+> `AUTHORISED_SERVERS` is only applied when the database is first created. To add a server later:
+> ```sh
+> docker compose exec db mariadb -uroot -p bf2142 -e "INSERT INTO servers (ip, authorised, prefix, gport, bydnsname, dnshost) VALUES ('1.2.3.4', 1, 'BF2142', 0, 0, 0)"
+> ```
+> On Docker Desktop (Windows/macOS), requests can reach the container from Docker's internal gateway instead of the game server's real IP. If round stats are rejected, check `docker compose logs web` for the IP that was refused and authorise that.
+
+Round logs are kept in the `web-logs` volume and the database in `db-data`; `docker compose down -v` deletes both.
 
 ## Setup
 
@@ -179,6 +216,24 @@ The 1.51 executable has the server IP built in as `192.168.1.3`. Replace it with
 | Game shows no stats or garbled responses | Check `display_errors = Off`, that `web/` is at the web root, and that `.htaccess` is being applied. |
 | Round stats are never saved | Make sure the game server's IP is in the `servers` table with `authorised = 1`, and look in `web/logs/`. |
 | `ExpiredAuth` errors | The server's clock is wrong. Login tokens expire after about 12 minutes, so sync the clock (NTP). |
+
+## Development
+
+Every push and pull request runs [CI](.github/workflows/ci.yml):
+
+- a syntax check of all PHP files on PHP 7.4 – 8.3;
+- the end-to-end smoke test (`tests/smoke_test.py`) against MySQL 8.0 and MariaDB 10.11, and against the Docker Compose stack.
+
+The smoke test uploads round snapshots like a game server, calls every game endpoint like a client, and checks the responses and the database. To run it locally against the Docker stack:
+
+```sh
+docker compose up -d --build
+BASE_URL=http://127.0.0.1 \
+DB_CMD="docker compose exec -T db mariadb -u<DB_USER> -p<DB_PASS> <DB_NAME>" \
+python3 tests/smoke_test.py
+```
+
+It needs Python 3 and the PHP CLI on your machine (to create test login tokens). The test submits rounds from your machine, so `AUTHORISED_SERVERS` must have included it when the database was created (on Linux, `172.16.0.0/12` covers Docker's network). It adds two test players (IDs `10000101` and `10000102`), so don't run it against a live database.
 
 ## Credits and license
 

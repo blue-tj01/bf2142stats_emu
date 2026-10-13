@@ -1,0 +1,10 @@
+.git
+.github
+cracked_exe
+exe_patch
+fesl_login_server
+python
+tests
+web/logs
+web/*.txt
+.env

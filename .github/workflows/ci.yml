@@ -1,0 +1,113 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: PHP ${{ matrix.php }} syntax
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['7.4', '8.0', '8.1', '8.2', '8.3']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          tools: none
+      - name: Check every PHP file parses
+        run: |
+          status=0
+          while IFS= read -r -d '' f; do
+            php -l "$f" > /dev/null || status=1
+          done < <(find web tests docker -type f \( -name '*.php' -o -name '*.aspx' \) -print0)
+          exit $status
+
+  smoke:
+    name: Smoke test (PHP 8.3, ${{ matrix.db }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        db: ['mysql:8.0', 'mariadb:10.11']
+    services:
+      db:
+        image: ${{ matrix.db }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: bf2142
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: bf2142
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot || mariadb-admin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      MYSQL: mysql -h127.0.0.1 -P3306 -uroot -proot bf2142
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mysqli
+          tools: none
+      - name: Load the schema and authorise this machine as a game server
+        run: |
+          $MYSQL < database/bf2142.sql
+          $MYSQL -e "INSERT INTO servers (ip, authorised, prefix, gport, bydnsname, dnshost) VALUES ('127.0.0.1', 1, 'BF2142', 0, 0, 0)"
+      - name: Configure and start the stats server
+        run: |
+          DB_HOST=127.0.0.1 DB_NAME=bf2142 DB_USER=root DB_PASS=root \
+            php docker/web/configure.php web/include/_ccconfig.php
+          mkdir -p web/logs
+          php -d log_errors=1 -d error_log="$PWD/php_errors.log" \
+            -S 127.0.0.1:8088 -t web tests/router.php > server.log 2>&1 &
+      - name: Run smoke test
+        env:
+          BASE_URL: http://127.0.0.1:8088
+          DB_CMD: ${{ env.MYSQL }}
+        run: python3 tests/smoke_test.py
+      - name: Fail on PHP fatal errors
+        if: always()
+        run: |
+          touch php_errors.log
+          if grep -i 'fatal' php_errors.log; then exit 1; fi
+      - name: PHP error log
+        if: failure()
+        run: cat php_errors.log server.log
+
+  docker:
+    name: Docker Compose
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: |
+          cp .env.example .env
+          sed -i 's/^DB_PASS=.*/DB_PASS=ci-pass/; s/^DB_ROOT_PASS=.*/DB_ROOT_PASS=ci-root/; s/^WEB_PORT=.*/WEB_PORT=8080/' .env
+          # Requests from the runner reach the container through Docker's network
+          sed -i 's#^AUTHORISED_SERVERS=.*#AUTHORISED_SERVERS=127.0.0.1,172.16.0.0/12#' .env
+      - name: Build and start
+        run: docker compose up -d --build --wait
+      - name: Run smoke test
+        env:
+          BASE_URL: http://127.0.0.1:8080
+          DB_CMD: docker compose exec -T db mariadb -ubf2142 -pci-pass bf2142
+        run: python3 tests/smoke_test.py
+      - name: Fail on PHP fatal errors
+        if: always()
+        run: |
+          if docker compose logs web | grep -i 'PHP Fatal'; then exit 1; fi
+      - name: Container logs
+        if: failure()
+        run: docker compose logs
+      - name: Stop
+        if: always()
+        run: docker compose down -v
