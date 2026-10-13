@@ -40,6 +40,9 @@ services:
       DB_USER: ${DB_USER:-bf2142}
       DB_PASS: ${DB_PASS}
       LOG_REQUESTS: ${LOG_REQUESTS:-0}
+      ADMIN_USER: ${ADMIN_USER:-}
+      ADMIN_PASS: ${ADMIN_PASS:-}
+      ADMIN_HOSTS: ${ADMIN_HOSTS:-}
     ports:
       - "${WEB_PORT:-80}:80"
     volumes:

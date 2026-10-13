@@ -12,9 +12,11 @@ $db_user = 'bf2142';
 $db_pass = 'change-me';
 
 
-#$admin_user = '';
-#$admin_pass = '';
-#$admin_hosts = array('127.0.0.1','localhost');
+// Web admin (admin.php) login. Logging in is disabled while either is empty.
+$admin_user = '';
+$admin_pass = '';
+// Addresses allowed to open admin.php: IPs, x.x.x.x/nn subnets or localhost
+$admin_hosts = array('localhost');
 $admin_log = '../logs/_admin_event.log';
 $admin_backup_path = './_backups/';
 $admin_backup_ext = '.php';

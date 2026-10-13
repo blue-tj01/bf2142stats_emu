@@ -112,7 +112,7 @@ function showLoginForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" name="adminform">
+		<form method="POST" action="admin.php" name="adminform">
 		<input type="hidden" name="task" value="<?php echo $task;?>">
 		<input type="hidden" name="action" value="login">
 		
@@ -157,7 +157,11 @@ function showMainForm() {
 		$data = fread($filename, filesize($readme));
 		fclose($filename);
 	} else {
-		$data = "File ".$readme." not found";
+		$data = "Use the menu on the left to manage the stats server.\n\n"
+			. "Edit Config   - database, logging and admin settings (saved to include/_ccconfig.php)\n"
+			. "Server Info   - game servers allowed to submit round stats\n"
+			. "Import Logs   - re-import saved round snapshots\n"
+			. "Clear DB      - delete all player stats (cannot be undone)";
 	}
 	echo htmlspecialchars($data);
 	?>
@@ -205,10 +209,9 @@ function showConfigForm() {
 		</div>
 	</div>
 	<div class="content">
-		<form method="POST" action="index.php" onSubmit="return configvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onSubmit="return configvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="saveconfig">
-		<input type="hidden" name="ext_ip" value="<?php echo get_ext_ip(); ?>">
 		<input type="hidden" name="cfg__db_expected_ver" value="<?php echo $cfg->get('db_expected_ver'); ?>">
 		
 		<table border="0" width="95%" style="border: 2px solid #808080;">
@@ -305,7 +308,7 @@ function showConfigForm() {
 			<tr>
 				<td align="right" valign="top" class="form-text">Auth Game Servers:</td>
 				<td align="left" valign="top">
-				<textarea name="cfg__game_hosts" rows="4" cols="16" tabindex="<?php echo $i++; ?>" class="inputbox"><?php echo implode("\n",$cfg->get('game_hosts')); ?></textarea></td>
+				<textarea name="cfg__game_hosts" rows="4" cols="16" tabindex="<?php echo $i++; ?>" class="inputbox"><?php echo implode("\n", (array) $cfg->get('game_hosts')); ?></textarea></td>
 				<td align="left" valign="top" class="form-desc">Authorised Game Servers. Enter one <a href="http://en.wikipedia.org/wiki/IPv4" target="_blank">IPv4 Address</a>
 				per line (Supports CIDR x.x.x.x/y notation).</td>
 			</tr>
@@ -385,7 +388,7 @@ function showConfigForm() {
 			<tr>
 				<td align="right" valign="middle" class="form-text">Auth Admin IP's:</td>
 				<td align="left" valign="middle">
-				<textarea name="cfg__admin_hosts" rows="4" cols="16" tabindex="<?php echo $i++; ?>" class="inputbox"><?php echo implode("\n",$cfg->get('admin_hosts')); ?></textarea></td>
+				<textarea name="cfg__admin_hosts" rows="4" cols="16" tabindex="<?php echo $i++; ?>" class="inputbox"><?php echo implode("\n", (array) $cfg->get('admin_hosts')); ?></textarea></td>
 				<td align="left" valign="top" class="form-desc">Authorised IP Addresses for Admin System (Localhost is ALWAYS enabled).
 				Enter one <a href="http://en.wikipedia.org/wiki/IPv4" target="_blank">IPv4 Address</a> per line (Supports CIDR x.x.x.x/y notation).</td>
 			</tr>
@@ -444,7 +447,7 @@ function showConfigTestForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="testconfig">
 		<table border="0" width="400" style="border: 2px solid #808080;">
@@ -559,7 +562,7 @@ function showMergePlayersForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="mergeplayers">
 		<table border="0" width="60%" style="border: 2px solid #808080;">
@@ -629,7 +632,7 @@ function showInstallDBForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="installdb">
 		<table border="0" width="500" style="border: 2px solid #808080;">
@@ -693,7 +696,7 @@ function showUpgradeDBForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="upgradedb">
 		<table border="0" width="500" style="border: 2px solid #808080;">
@@ -755,7 +758,7 @@ function showClearDBForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="cleardb">
 		<table border="0" width="400" style="border: 2px solid #808080;">
@@ -793,7 +796,7 @@ function showBackupDBForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="backupdb">
 		<table border="0" width="400" style="border: 2px solid #808080;">
@@ -845,7 +848,7 @@ function showRestoreDBForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="restoredb">
 		<table border="0" width="400" style="border: 2px solid #808080;">
@@ -900,7 +903,7 @@ function showServerInfo() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="<?php echo $task;?>">
 				
@@ -929,11 +932,11 @@ function showServerInfo() {
 					<input type="checkbox" id="item<?php echo $i++; ?>" name="selitems[]" value="<?php echo $row['id']; ?>" onclick="javascript:Toggle(this);">
 				</td>
 				<td align="left"><?php echo $row['ip']; ?></td>
-				<td align="left"><?php echo $row['hostname']; ?></td>
+				<td align="left"><?php echo htmlspecialchars($row['name']); ?></td>
 				<td align="center"><?php echo $row['prefix']; ?></td>
 				<td align="center"><?php echo $row['gport']; ?></td>
 				<td align="center"><?php echo $row['port']; ?></td>
-				<td align="center"><?php if($row['updt'] > (time()-300))  echo '<b><font color="green">online</font></b>'; else  echo '<b><font color="red">offline</font></b>'; ?></td>
+				<td align="center"><?php if(strtotime($row['lastupdate']) > (time()-300))  echo '<b><font color="green">online</font></b>'; else  echo '<b><font color="red">offline</font></b>'; ?></td>
 			</tr><?php
 				} ?>
 			<tr>
@@ -977,7 +980,7 @@ function showMapInfo() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="<?php echo $task;?>">
 				
@@ -1083,7 +1086,7 @@ function showImportLogsForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="importlogs">
 		<table border="0" width="400" style="border: 2px solid #808080;">
@@ -1139,7 +1142,7 @@ function buildPlayerList($task, $where) {
 
 ?>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="<?php echo $task;?>">
 				
@@ -1187,7 +1190,7 @@ function buildPlayerList($task, $where) {
 				// Display Page Links
 				if($page != 1) { 
 			        $pageprev = $page-1;
-					echo("<a href=\"index.php?task={$task}&page={$pageprev}\">&lt;&lt; PREV</a> ");  
+					echo("<a href=\"admin.php?task={$task}&page={$pageprev}\">&lt;&lt; PREV</a> ");  
 				} else {
 					echo("&lt;&lt;PREV ");
 				}
@@ -1197,7 +1200,7 @@ function buildPlayerList($task, $where) {
 					if($j == $page){
 						echo($j." ");
 					} else {
-						echo("<a href=\"index.php?task={$task}&page={$j}\">$j</a> "); 
+						echo("<a href=\"admin.php?task={$task}&page={$j}\">$j</a> "); 
 					}
 				}
 				
@@ -1205,13 +1208,13 @@ function buildPlayerList($task, $where) {
 		            if($j == $page){
 						echo($j." ");
 					} else {
-						echo("<a href=\"index.php?task={$task}&page={$j}\">$j</a> ");
+						echo("<a href=\"admin.php?task={$task}&page={$j}\">$j</a> ");
 					}
 				}
 				
 				if(($totalrows - ($limit * $page)) > 0){
 					$pagenext   = $page + 1;
-			        echo("<a href=\"index.php?task={$task}&page={$pagenext}\">NEXT &gt;&gt;</a>");
+			        echo("<a href=\"admin.php?task={$task}&page={$pagenext}\">NEXT &gt;&gt;</a>");
 				} else {
 					echo("NEXT &gt;&gt;"); 
 				} 
@@ -1252,7 +1255,7 @@ function showImportPlayersForm() {
 		</div>
 	</div>
 	<div class="content" align="center">
-		<form method="POST" action="index.php" onsubmit="return confirmvalidation(this);" name="adminform">
+		<form method="POST" action="admin.php" onsubmit="return confirmvalidation(this);" name="adminform">
 		<input type="hidden" name="action" value="process">
 		<input type="hidden" name="task" value="importplayers">
 		<table border="0" width="400" style="border: 2px solid #808080;">

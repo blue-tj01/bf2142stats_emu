@@ -537,6 +537,63 @@ class ea_stats
     return base64_decode(str_replace(array('[', ']', '_'), array('+', '/', '='), $str));
   }
 }
+/*
+ * Game auth tokens (the "auth" request parameter). Decrypted, a token is
+ * 16 bytes, numbers little-endian:
+ *   bytes 0-3    time the token was issued (unix timestamp)
+ *   bytes 4-7    always 100
+ *   bytes 8-11   player id
+ *   bytes 12-13  1 for a game-server token, 0 for a player's
+ *   bytes 14-15  checksum (CalcCRC)
+ */
+function decodeAuthToken($auth)
+{
+  $bf = new ea_stats();
+  // Pad to one 16-byte block so a malformed token decodes to garbage (and
+  // so no matching player) instead of raising warnings
+  $block = substr(str_pad($bf->getBase64Decode($auth), 16, "\0"), 0, 16);
+  $hex = $bf->str2hex($bf->DefDecryptBlock($block));
+  $isServer = (authTokenField($hex, 12, 2) == 1);
+  return array(
+    'time'     => authTokenField($hex, 0, 4),
+    'pid'      => authTokenField($hex, 8, 4),
+    'isServer' => $isServer,
+    'clType'   => $isServer ? 'server' : 'client',
+  );
+}
+
+// Reads a little-endian number of $bytes bytes at byte $offset of the hex string
+function authTokenField($hex, $offset, $bytes)
+{
+  $out = '';
+  for ($i = $bytes - 1; $i >= 0; $i--) {
+    $out .= substr($hex, ($offset + $i) * 2, 2);
+  }
+  return hexdec($out);
+}
+
+function authTokenExpired($token, $maxAge)
+{
+  return ($token['time'] + $maxAge) < time();
+}
+
+function sendExpiredAuth()
+{
+  echo "ExpiredAuth: Expired authentication token";
+  exit;
+}
+
+// Decodes the token and stops with the game's "ExpiredAuth" error when it is
+// older than $maxAge seconds
+function requireFreshAuthToken($auth, $maxAge)
+{
+  $token = decodeAuthToken($auth);
+  if (authTokenExpired($token, $maxAge)) {
+    sendExpiredAuth();
+  }
+  return $token;
+}
+
 function dwh($h)
 {
   $s = substr("0000000".$h, -8);

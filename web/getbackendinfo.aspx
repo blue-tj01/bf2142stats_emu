@@ -18,23 +18,9 @@ if(isset($_GET["auth"]) AND $_GET["auth"] != "") {	$auth = $_GET["auth"];	} else
 require_once("ea_support.php");
 require_once('include/_ccconfig.php');
 
-$bfcoding  = new ea_stats();
-$code = $bfcoding->str2hex($bfcoding->DefDecryptBlock($bfcoding->getBase64Decode($auth)));
-if ((hexdec($code[6].$code[7].$code[4].$code[5].$code[2].$code[3].$code[0].$code[1])+708) < $timestamp) {	echo "ExpiredAuth: Expired authentication token";exit;	}
-/*
-0  4C524F45 7
-8  64000000 15
-16 9703F104 23
-24 0000     27
-28 87C3     31
-*/
-if(hexdec($code[26].$code[27].$code[24].$code[25]) == 1) {
-	$clType = 'server';
-	$isServer = true;
-} else {
-	$clType = 'client';
-	$isServer = false;
-}
+$token = requireFreshAuthToken($auth, 708);
+$clType = $token['clType'];
+$isServer = $token['isServer'];
 $mod = "server";
 
 $Out = "O
