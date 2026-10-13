@@ -211,13 +211,11 @@ function getPageContents($url) {
       $results = @file($url);
       }
      */
+    $results = false;
     // either there was no function, or it failed -- try curl
     if (!($results) && (function_exists('curl_exec'))) {
         $curl_handle = curl_init();
         curl_setopt($curl_handle, CURLOPT_URL, $url);
-        $sip = '127.0.0.1'; //change to external ip
-        //$sip = '195.140.177.250';
-        curl_setopt($curl_handle, CURLOPT_INTERFACE, $sip);
         //curl_setopt($curl_handle, CURLOPT_USERAGENT, "Mozilla/4.0 (compatible; MSIE 5.5; Windows NT 5.0)");
         curl_setopt($curl_handle, CURLOPT_USERAGENT, "GameSpyHTTP/1.0");
         curl_setopt($curl_handle, CURLOPT_RETURNTRANSFER, 1);

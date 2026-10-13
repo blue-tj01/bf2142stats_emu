@@ -224,7 +224,6 @@ The 1.51 executable has the server IP built in as `192.168.1.3`. Replace it with
 ## Security notes
 
 - Only game servers listed as `authorised` in the `servers` table can submit round stats.
-- `web/sample.php` is a debugging page that can create login tokens for any player. `.htaccess` limits it to localhost; delete it on a public server if you don't need it.
 - Request logging is off by default. When it's on, the logs include players' login tokens, so keep `$log_dir` outside the web root. `.htaccess` also blocks `.txt`, `.log` and `.bak` files in the web root as a safety net.
 - Your database password lives only in `web/include/_ccconfig.php`, which git ignores.
 - The token format is EA's original, and its key is public in `ea_support.php`. Tokens are a convenience check, not real authentication.

@@ -10,3 +10,8 @@ web/include/_ccconfig.php
 
 # Local Docker settings
 .env
+
+# IDE project files
+nbproject/
+.idea/
+.vscode/

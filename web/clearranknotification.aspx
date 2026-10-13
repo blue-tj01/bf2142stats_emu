@@ -55,11 +55,15 @@ if (!mysql_num_rows($result1)) {
 $query2 = "SELECT rnkcg FROM `playerprogress` WHERE pid='" . $authPID . "' LIMIT 1";
 $result2 = mysql_query($query2) or die(mysql_error());
 $row2 = mysql_fetch_assoc($result2);
-if ($row2['rnkcg'] > 0) {
+$rnkcg = $row2 ? $row2['rnkcg'] : 0;
+if ($rnkcg > 0) {
+    // Clear the pending rank-up notification
     $query3 = "UPDATE playerprogress SET rnkcg = 0  WHERE pid='" . $authPID . "' LIMIT 1";
-    $result3 = mysql_query($query3) or die(mysql_error());   
-    exit; // !!!fixme!!!
-} elseif ($row2['rnkcg'] == 0) {
+    $result3 = mysql_query($query3) or die(mysql_error());
+}
+// Answer the same way whether or not there was a notification to clear;
+// previously a cleared notification got no response at all
+if ($rnkcg >= 0) {
     $Out = "O\n" .
             "H\tresult\tasof\n" .
             "D\t0\t" . $timestamp . "\n" .

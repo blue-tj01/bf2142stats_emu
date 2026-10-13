@@ -14,7 +14,7 @@ $db_pass = 'change-me';
 
 #$admin_user = '';
 #$admin_pass = '';
-#$admin_hosts = array('62.1.195.3','127.0.0.1','localhost');
+#$admin_hosts = array('127.0.0.1','localhost');
 $admin_log = '../logs/_admin_event.log';
 $admin_backup_path = './_backups/';
 $admin_backup_ext = '.php';

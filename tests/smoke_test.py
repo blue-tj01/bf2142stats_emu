@@ -170,6 +170,18 @@ def test_endpoints():
     check("\nD\t111" in body, "selected unlock is listed")
 
 
+def test_rank_notification():
+    print("Rank-up notification (clearranknotification.aspx)")
+    auth = token(ALPHA)
+    sql("UPDATE playerprogress SET rnkcg = 1 WHERE pid = %d;" % ALPHA)
+    body = request("clearranknotification.aspx", {"auth": auth})
+    check(body.startswith("O\n") and framed(body), "pending rank-up: well-formed response")
+    rows = sql("SELECT rnkcg FROM playerprogress WHERE pid = %d" % ALPHA)
+    check(rows and rows[0][0] == "0", "pending rank-up cleared")
+    body = request("clearranknotification.aspx", {"auth": auth})
+    check(body.startswith("O\n") and framed(body), "no rank-up: well-formed response")
+
+
 def test_tokens():
     print("Auth tokens")
     old_client = token(ALPHA, 0, 1000)
@@ -211,6 +223,7 @@ if __name__ == "__main__":
     reset_db()
     test_round_upload()
     test_endpoints()
+    test_rank_notification()
     test_tokens()
     test_no_request_dumps()
     if failures:
