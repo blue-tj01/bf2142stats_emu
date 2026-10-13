@@ -120,21 +120,55 @@ jobs:
         run: docker compose down -v
 
   fesl:
-    name: FESL server tests
+    name: FESL server tests (${{ matrix.db }}, ${{ matrix.client }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - db: 'mariadb:10.11'
+            client: libmariadb-dev
+          - db: 'mysql:8.0'
+            client: libmysqlclient-dev
+    services:
+      db:
+        image: ${{ matrix.db }}
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: bf2142
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: bf2142
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot || mariadb-admin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      MYSQL: mysql -h127.0.0.1 -P3306 -uroot -proot bf2142
     defaults:
       run:
         working-directory: fesl_server
     steps:
       - uses: actions/checkout@v4
-      - name: Install OpenSSL headers
-        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Install OpenSSL and database client headers
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev ${{ matrix.client }}
       - name: Decoder and session tests (replay of the captures)
         run: make -C tests test
       - name: Build the FESL server
         run: make -C src/server
-      - name: Server end-to-end test (TLS and plain TCP)
+      - name: Load the schema and add a read-only database user for the server
+        run: |
+          $MYSQL < ../database/bf2142.sql
+          # the server only needs SELECT; the default password method of each server
+          $MYSQL -e "CREATE USER 'fesl'@'%' IDENTIFIED BY 'fesl-pass'; GRANT SELECT ON bf2142.* TO 'fesl'@'%'"
+      - name: Server end-to-end test (TLS, plain TCP and the account table)
         working-directory: fesl_server/tests
+        env:
+          FESL_DB_HOST: 127.0.0.1
+          FESL_DB_PORT: 3306
+          FESL_DB_NAME: bf2142
+          FESL_DB_USER: fesl
+          FESL_DB_PASS: fesl-pass
+          DB_CMD: ${{ env.MYSQL }}
         run: python3 test_server.py ../src/server/fesl_server
       - name: Decoder and session tests with ASan/UBSan
         run: |

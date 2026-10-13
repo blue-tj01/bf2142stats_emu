@@ -23,3 +23,6 @@ tests/test_fesl
 tests/data/
 src/server/fesl_server
 tests/test_fesl_session
+
+# Python bytecode from the test scripts
+__pycache__/

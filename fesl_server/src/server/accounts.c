@@ -122,6 +122,20 @@ const fesl_account *fesl_accounts_find(const fesl_accounts *a, const char *name)
     return NULL;
 }
 
+static int file_find(fesl_account_store *store, const char *name, fesl_account *out) {
+    const fesl_account  *acc = fesl_accounts_find(store->ctx, name);
+
+    if(!acc) return FESL_ACCOUNT_NOT_FOUND;
+    *out = *acc;
+    return FESL_ACCOUNT_FOUND;
+}
+
+void fesl_accounts_store_init(fesl_account_store *store, const fesl_accounts *a) {
+    memset(store, 0, sizeof(fesl_account_store));
+    store->find = file_find;
+    store->ctx  = (void *)a;
+}
+
 void fesl_accounts_free(fesl_accounts *a) {
     free(a->list);
     memset(a, 0, sizeof(fesl_accounts));

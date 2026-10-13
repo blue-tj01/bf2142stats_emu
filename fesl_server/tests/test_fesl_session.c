@@ -125,6 +125,7 @@ static void test_replay(const char *path, int exact_time) {
                 server,
                 ours;
     fesl_accounts accounts;
+    fesl_account_store store;
     fesl_session session;
     fesl_output out = { 0 };
     const fesl_packet *captured,
@@ -143,7 +144,8 @@ static void test_replay(const char *path, int exact_time) {
 
     // every client packet in capture order, the ones we don't handle yet
     // just get an error answer
-    fesl_session_init(&session, &accounts, counter_random, &rnd);
+    fesl_accounts_store_init(&store, &accounts);
+    fesl_session_init(&session, &store, counter_random, &rnd);
     for(i = 0; i < client.count; i++) {
         CHECK(fesl_session_handle(&session, &client.pkt[i], D1_HELLO_TIME, &out) == FESL_SESSION_CONTINUE);
     }
@@ -268,12 +270,14 @@ static void check_error(const packet_list *ans, const char *command, uint32_t nu
 
 static void test_session_errors(void) {
     fesl_accounts accounts;
+    fesl_account_store store;
     fesl_session s;
     packet_list ans;
     uint32_t    rnd = 1;
 
     CHECK(fesl_accounts_parse(&accounts, ACCOUNTS) == 0);
-    fesl_session_init(&s, &accounts, counter_random, &rnd);
+    fesl_accounts_store_init(&store, &accounts);
+    fesl_session_init(&s, &store, counter_random, &rnd);
 
     // Login before Hello
     CHECK(handle_one(&s, "acct", 2, "TXN=Login\nname=Tema567\npassword=123456\n", &ans) == FESL_SESSION_CONTINUE);
@@ -372,6 +376,7 @@ static void test_account_status(void) {
         { "pend", "105" }
     };
     fesl_accounts accounts;
+    fesl_account_store store;
     fesl_session s;
     packet_list ans;
     uint32_t    rnd = 1;
@@ -379,7 +384,8 @@ static void test_account_status(void) {
     size_t      i;
 
     CHECK(fesl_accounts_parse(&accounts, "dis pw 1 disabled\nban pw 2 BANNED\npend pw 3 pending\nok pw 4 active\n") == 0);
-    fesl_session_init(&s, &accounts, counter_random, &rnd);
+    fesl_accounts_store_init(&store, &accounts);
+    fesl_session_init(&s, &store, counter_random, &rnd);
     CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
     free_list(&ans);
 
@@ -410,7 +416,8 @@ static void test_account_status(void) {
     free_list(&ans);
 
     // a new connection starts over
-    fesl_session_init(&s, &accounts, counter_random, &rnd);
+    fesl_accounts_store_init(&store, &accounts);
+    fesl_session_init(&s, &store, counter_random, &rnd);
     CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
     free_list(&ans);
     CHECK(handle_one(&s, "acct", 2, "TXN=Login\nname=ok\npassword=pw\n", &ans) == FESL_SESSION_CONTINUE);
@@ -419,6 +426,49 @@ static void test_account_status(void) {
     free_list(&ans);
 
     fesl_accounts_free(&accounts);
+}
+
+// a store whose database is down, then comes back
+static int down_find(fesl_account_store *store, const char *name, fesl_account *out) {
+    int     *up = store->ctx;
+
+    if(!*up) return FESL_ACCOUNT_ERROR;
+    if(strcmp(name, "Tema567")) return FESL_ACCOUNT_NOT_FOUND;
+    memset(out, 0, sizeof(*out));
+    strcpy(out->name, "Tema567");
+    strcpy(out->password, "123456");
+    out->user_id = 10000009;
+    return FESL_ACCOUNT_FOUND;
+}
+
+static void test_store_errors(void) {
+    fesl_account_store store = { .find = down_find };
+    fesl_session s;
+    packet_list ans;
+    uint32_t    rnd = 1;
+    int         up = 0,
+                i;
+
+    store.ctx = &up;
+    fesl_session_init(&s, &store, counter_random, &rnd);
+    CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+
+    // a store error is a system error and not a failed attempt
+    for(i = 0; i < FESL_MAX_LOGIN_ATTEMPTS + 2; i++) {
+        CHECK(handle_one(&s, "acct", 2, "TXN=Login\nname=Tema567\npassword=123456\n", &ans) == FESL_SESSION_CONTINUE);
+        check_error(&ans, "acct", 2, "Login", "99");
+        free_list(&ans);
+    }
+    CHECK(!s.account);
+    CHECK(s.failed_logins == 0);
+
+    up = 1;
+    CHECK(handle_one(&s, "acct", 3, "TXN=Login\nname=Tema567\npassword=123456\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1 && !fesl_get(&ans.pkt[0], "errorCode"));
+    if(ans.count == 1) CHECK_STR(fesl_get(&ans.pkt[0], "userId"), "10000009");
+    CHECK(s.account && (s.account->user_id == 10000009));
+    free_list(&ans);
 }
 
 static void test_accounts(void) {
@@ -478,6 +528,7 @@ int main(int argc, char *argv[]) {
     test_accounts();
     test_session_errors();
     test_account_status();
+    test_store_errors();
 
     snprintf(path, sizeof(path), "%s/d1/dump2_ssl.pcap", dir);
     test_replay(path, 1);

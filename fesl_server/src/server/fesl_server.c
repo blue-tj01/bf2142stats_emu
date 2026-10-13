@@ -30,6 +30,8 @@
 #include "fesl.h"
 #include "fesl_session.h"
 #include "accounts.h"
+#include "accounts_db.h"
+#include <getopt.h>
 
 #if OPENSSL_VERSION_NUMBER < 0x10100000L
     #error "OpenSSL 1.1.0 or newer is needed"
@@ -42,7 +44,8 @@
 
 typedef struct {
     SSL_CTX     *ctx;           // NULL for plain TCP
-    fesl_accounts accounts;
+    fesl_accounts file_accounts;
+    fesl_account_store *accounts;
     int         ping_interval;
 } server;
 
@@ -169,7 +172,7 @@ static void *client_thread(void *arg) {
         }
         printf("%s: %s %s\n", c->peer, SSL_get_version(ch.ssl), SSL_get_cipher_name(ch.ssl));
     }
-    fesl_session_init(&session, &c->srv->accounts, ssl_random, NULL);
+    fesl_session_init(&session, c->srv->accounts, ssl_random, NULL);
 
     // short receive timeout so pings go out on time even while idle
     tv.tv_sec  = 1;
@@ -226,6 +229,7 @@ static void *client_thread(void *arg) {
 
 quit:
     printf("%s: disconnected\n", c->peer);
+    if(c->srv->accounts->thread_end) c->srv->accounts->thread_end(c->srv->accounts);
     if(ch.ssl) {
         SSL_shutdown(ch.ssl);
         SSL_free(ch.ssl);
@@ -273,22 +277,37 @@ static SSL_CTX *create_ssl_ctx(const char *cert_file, const char *method) {
 
 static void usage(const char *prog) {
     fprintf(stderr,
-        "Usage: %s [options] -c CERT -a ACCOUNTS\n"
+        "Usage: %s [options] -c CERT (-a ACCOUNTS | -dbname NAME -dbuser USER)\n"
         "\n"
         "-c CERT      PEM file with the certificate and its passwordless private key\n"
         "             (not needed with -X none)\n"
-        "-a ACCOUNTS  accounts file, one \"name password user_id\" per line\n"
+        "-a ACCOUNTS  accounts file, one \"name password user_id [status]\" per line\n"
+        "-dbhost HOST, -dbport PORT, -dbname NAME, -dbuser USER, -dbpass PASS\n"
+        "             read accounts from the account table of the stats database\n"
+        "             instead (like fesl_login_server.exe). Default host 127.0.0.1;\n"
+        "             the password can also be set in FESL_DB_PASS%s\n"
         "-p PORT      port to listen on (default %d)\n"
         "-b IP        address to listen on (default all)\n"
         "-X METHOD    ssl3 (default, what the game uses), tls (any TLS version) or\n"
         "             none (plain TCP, for clients patched to skip SSL)\n"
         "-i SECONDS   interval between the server Pings (default %d)\n",
-        prog, DEFAULT_PORT, DEFAULT_PING_INTERVAL);
+        prog, fesl_accounts_db_available() ? "" : "\n             (not available: built without the MySQL client library)",
+        DEFAULT_PORT, DEFAULT_PING_INTERVAL);
     exit(1);
 }
 
 int main(int argc, char *argv[]) {
+    static const struct option long_options[] = {
+        { "dbhost", required_argument, NULL, 'H' },
+        { "dbport", required_argument, NULL, 'P' },
+        { "dbname", required_argument, NULL, 'N' },
+        { "dbuser", required_argument, NULL, 'U' },
+        { "dbpass", required_argument, NULL, 'W' },
+        { NULL, 0, NULL, 0 }
+    };
     server      srv;
+    fesl_account_store store;
+    fesl_db_config db = { .host = "127.0.0.1" };
     const char  *cert_file = NULL,
                 *accounts_file = NULL,
                 *method = "ssl3",
@@ -306,8 +325,14 @@ int main(int argc, char *argv[]) {
 
     memset(&srv, 0, sizeof(srv));
     srv.ping_interval = DEFAULT_PING_INTERVAL;
-    while((opt = getopt(argc, argv, "c:a:p:b:X:i:h")) != -1) {
+    // getopt_long_only accepts -dbhost like fesl_login_server.exe
+    while((opt = getopt_long_only(argc, argv, "c:a:p:b:X:i:h", long_options, NULL)) != -1) {
         switch(opt) {
+            case 'H': db.host = optarg; break;
+            case 'P': db.port = atoi(optarg); break;
+            case 'N': db.name = optarg; break;
+            case 'U': db.user = optarg; break;
+            case 'W': db.password = optarg; break;
             case 'c': cert_file = optarg; break;
             case 'a': accounts_file = optarg; break;
             case 'p': port = atoi(optarg); break;
@@ -317,18 +342,28 @@ int main(int argc, char *argv[]) {
             default:  usage(argv[0]);
         }
     }
-    if((!cert_file && strcmp(method, "none")) || !accounts_file || (optind != argc) ||
+    if(!db.password) db.password = getenv("FESL_DB_PASS");
+    // exactly one account source
+    if((!cert_file && strcmp(method, "none")) || (!accounts_file == !db.name) ||
+       (db.name && !db.user) || (optind != argc) ||
        (port <= 0) || (port > 65535) || (srv.ping_interval <= 0)) usage(argv[0]);
 
     setvbuf(stdout, NULL, _IOLBF, 0);
     signal(SIGPIPE, SIG_IGN);
 
-    ret = fesl_accounts_load(&srv.accounts, accounts_file);
-    if(ret) {
-        if(ret < 0) fprintf(stderr, "Error: can't read %s\n", accounts_file);
-        else        fprintf(stderr, "Error: %s line %d is invalid, expected \"name password user_id\"\n", accounts_file, ret);
+    if(accounts_file) {
+        ret = fesl_accounts_load(&srv.file_accounts, accounts_file);
+        if(ret) {
+            if(ret < 0) fprintf(stderr, "Error: can't read %s\n", accounts_file);
+            else        fprintf(stderr, "Error: %s line %d is invalid, expected \"name password user_id [status]\"\n", accounts_file, ret);
+            return 1;
+        }
+        fesl_accounts_store_init(&store, &srv.file_accounts);
+        printf("accounts file: %s, %u accounts\n", accounts_file, (unsigned)srv.file_accounts.count);
+    } else if(fesl_accounts_db_open(&store, &db) < 0) {
         return 1;
     }
+    srv.accounts = &store;
 
     if(strcmp(method, "none")) {
         srv.ctx = create_ssl_ctx(cert_file, method);
@@ -353,8 +388,7 @@ int main(int argc, char *argv[]) {
         perror("bind");
         return 1;
     }
-    printf("FESL server listening on %s:%d (%s), %u accounts\n",
-        bind_ip ? bind_ip : "0.0.0.0", port, method, (unsigned)srv.accounts.count);
+    printf("FESL server listening on %s:%d (%s)\n", bind_ip ? bind_ip : "0.0.0.0", port, method);
 
     for(;;) {
         addrlen = sizeof(addr);

@@ -48,17 +48,18 @@ typedef struct {
 } fesl_output;
 
 typedef struct {
-    const fesl_accounts *accounts;
+    fesl_account_store *accounts;
     uint32_t    (*random)(void *ctx);   // randomness for salts and keys
     void        *random_ctx;
 
     int         hello_done;
-    const fesl_account *account;        // logged in account or NULL
+    const fesl_account *account;        // &account_data when logged in, else NULL
+    fesl_account account_data;
     int         failed_logins;
     char        lkey[FESL_LKEY_SIZE + 1];
 } fesl_session;
 
-void fesl_session_init(fesl_session *s, const fesl_accounts *accounts, uint32_t (*random)(void *), void *random_ctx);
+void fesl_session_init(fesl_session *s, fesl_account_store *accounts, uint32_t (*random)(void *), void *random_ctx);
 
 // Handles one client packet, now is used for the Hello curTime.
 int fesl_session_handle(fesl_session *s, const fesl_packet *req, time_t now, fesl_output *out);

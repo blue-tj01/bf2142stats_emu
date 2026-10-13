@@ -3,12 +3,20 @@
 # module can't speak SSLv3) and with -X none (plain TCP), and logs in like
 # the game does.
 #
+# With FESL_DB_NAME set it also runs against the account table of a stats
+# database (database/bf2142.sql), like tests/smoke_test.py does:
+#   FESL_DB_HOST, FESL_DB_PORT, FESL_DB_NAME, FESL_DB_USER, FESL_DB_PASS
+#             what the server connects with
+#   DB_CMD    command that runs SQL read from stdin against that database,
+#             used to add and remove the test accounts
+#
 # This program is free software; you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 2 of the License, or
 # (at your option) any later version.
 
 import os
+import shlex
 import socket
 import ssl
 import struct
@@ -83,14 +91,25 @@ def free_port():
         return s.getsockname()[1]
 
 
-def run(method, cert, accounts, log):
+def login(port, use_ssl, name, password):
+    c = Client(port, use_ssl)
+    c.send("fsys", 0x80000001, HELLO)
+    c.recv()
+    c.recv()
+    c.send("acct", 0x80000002, LOGIN.replace("name=Tema567", "name=" + name).format(password=password))
+    answer = c.recv()
+    c.close()
+    return answer[2] if answer else {}
+
+
+def run(method, cert, source, log, user_id="10", env=None, extra=None):
     use_ssl = method != "none"
     port = free_port()
-    args = [SERVER, "-X", method, "-p", str(port), "-a", accounts, "-i", str(PING_INTERVAL)]
+    args = [SERVER, "-X", method, "-p", str(port), "-i", str(PING_INTERVAL)] + source
     if use_ssl:
         args += ["-c", cert]
     with open(log, "w") as logf:
-        server = subprocess.Popen(args, stdout=logf, stderr=subprocess.STDOUT)
+        server = subprocess.Popen(args, stdout=logf, stderr=subprocess.STDOUT, env=env)
     try:
         for _ in range(50):
             try:
@@ -114,7 +133,8 @@ def run(method, cert, accounts, log):
         c.send("acct", 0x80000002, LOGIN.format(password="123456"))
         cmd, word, login = c.recv()
         check((cmd, word) == ("acct", 0x80000002), "Login answer header")
-        check(login.get("displayName") == "Tema567" and login.get("userId") == "10", "Login account")
+        check(login.get("displayName") == "Tema567" and login.get("userId") == user_id
+              and login.get("profileId") == user_id, "Login account: %r" % login)
         check(len(login.get("lkey", "")) == 28 and "errorCode" not in login, "Login lkey")
 
         c.send("dobj", 0x80000003, "TXN=GetObjectInventory\ndomainId=eagames\nsubdomainId=bf2142\n"
@@ -163,6 +183,9 @@ def run(method, cert, accounts, log):
               "wrong password error")
         c.close()
 
+        if extra:
+            extra(port, use_ssl)
+
         # the server is still alive
         check(server.poll() is None, "server still running")
     finally:
@@ -188,11 +211,74 @@ def main():
 
     for method in ("tls", "none"):
         before = failures
-        text = run(method, cert, accounts, os.path.join(tmp, "server-%s.log" % method))
+        text = run(method, cert, ["-a", accounts], os.path.join(tmp, "server-%s.log" % method))
         if failures != before:
             print(text)
         print("server test (-X %s):" % method, "%d failures" % (failures - before) if failures != before else "ok")
+
+    if os.environ.get("FESL_DB_NAME"):
+        before = failures
+        text = run_db(cert, os.path.join(tmp, "server-db.log"))
+        if failures != before:
+            print(text)
+        print("server test (database):", "%d failures" % (failures - before) if failures != before else "ok")
+    else:
+        print("server test (database): skipped, FESL_DB_NAME not set")
     return 1 if failures else 0
+
+
+TEST_ACCOUNTS = ("Tema567", "fesl_test_other")
+
+
+def sql(query):
+    out = subprocess.run(shlex.split(os.environ["DB_CMD"]) + ["-N", "-B"], input=query,
+                         capture_output=True, text=True)
+    if out.returncode != 0:
+        sys.exit("SQL failed: %s\n%s" % (query, out.stderr))
+    return [line.split("\t") for line in out.stdout.splitlines()]
+
+
+def run_db(cert, log):
+    names = ",".join("'%s'" % n for n in TEST_ACCOUNTS)
+    sql("DELETE FROM account WHERE account IN (%s)" % names)
+    for name, password in zip(TEST_ACCOUNTS, ("123456", "other-pass")):
+        sql("INSERT INTO account (account, password, email, countryCode, DOBYear, DOBMonth, DOBDay, "
+            "zipCode, eaMailFlag, thirdPartyMailFlag) VALUES ('%s', '%s', 'test@example.com', 'US', "
+            "1990, 1, 1, '', 0, 0)" % (name, password))
+    user_id = sql("SELECT profileid FROM account WHERE account = 'Tema567'")[0][0]
+    user = os.environ.get("FESL_DB_USER", "")
+
+    def db_checks(port, use_ssl):
+        # names are matched case-insensitively, the stored spelling is returned
+        answer = login(port, use_ssl, "tema567", "123456")
+        check(answer.get("displayName") == "Tema567" and answer.get("userId") == user_id,
+              "case-insensitive login: %r" % answer)
+        answer = login(port, use_ssl, "fesl_test_other", "other-pass")
+        check("errorCode" not in answer and answer.get("userId") != user_id, "second account: %r" % answer)
+
+        # the name is a query parameter, so SQL in it is just a wrong name
+        for name in ("x' OR '1'='1", "Tema567' -- ", "Tema567\\", "A" * 46):
+            answer = login(port, use_ssl, name, "123456")
+            check(answer.get("errorCode") == "101", "unknown name %r: %r" % (name, answer))
+
+        # after the database drops the server's connection it reconnects
+        rows = sql("SELECT id FROM information_schema.processlist WHERE user = '%s' "
+                   "AND command = 'Sleep'" % user)
+        check(len(rows) >= 1, "the server's database connection is open")
+        for row in rows:
+            sql("KILL %s" % row[0])
+        answer = login(port, use_ssl, "Tema567", "123456")
+        check(answer.get("userId") == user_id, "login after the connection was killed: %r" % answer)
+
+    env = dict(os.environ)
+    try:
+        # the password comes from FESL_DB_PASS, not the command line
+        source = ["-dbhost", os.environ.get("FESL_DB_HOST", "127.0.0.1"),
+                  "-dbport", os.environ.get("FESL_DB_PORT", "3306"),
+                  "-dbname", os.environ["FESL_DB_NAME"], "-dbuser", user]
+        return run("tls", cert, source, log, user_id=user_id, env=env, extra=db_checks)
+    finally:
+        sql("DELETE FROM account WHERE account IN (%s)" % names)
 
 
 if __name__ == "__main__":
