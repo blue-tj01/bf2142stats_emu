@@ -43,7 +43,13 @@ typedef bool my_bool;
 #define DB_TIMEOUT  5   // seconds for connecting, reading and writing
 
 // the name is bound as a parameter, never pasted into the query
-#define FIND_QUERY  "SELECT profileid, account, password FROM account WHERE account = ? ORDER BY profileid LIMIT 1"
+#define FIND_QUERY  "SELECT profileid, account, password, email, countryCode, DOBYear, DOBMonth, DOBDay, " \
+                    "zipCode, eaMailFlag, thirdPartyMailFlag FROM account WHERE account = ? ORDER BY profileid LIMIT 1"
+
+enum {  // result columns
+    COL_ID, COL_NAME, COL_PASSWORD, COL_EMAIL, COL_COUNTRY, COL_DOB_YEAR, COL_DOB_MONTH,
+    COL_DOB_DAY, COL_ZIP, COL_EA_MAIL, COL_THIRD_PARTY_MAIL, COLUMNS
+};
 
 typedef struct {
     fesl_db_config  config;
@@ -75,19 +81,30 @@ static int db_connect(db_store *db) {
     return 0;
 }
 
+static void bind_string(MYSQL_BIND *b, char *buf, size_t size) {
+    b->buffer_type   = MYSQL_TYPE_STRING;
+    b->buffer        = buf;
+    b->buffer_length = size;
+}
+
+static void bind_uint(MYSQL_BIND *b, unsigned int *value) {
+    b->buffer_type = MYSQL_TYPE_LONG;
+    b->is_unsigned = 1;
+    b->buffer      = value;
+}
+
 // FESL_ACCOUNT_ERROR on database errors, the connection is then dropped
 static int db_query(db_store *db, const char *name, fesl_account *out) {
     MYSQL_STMT      *stmt;
     MYSQL_BIND      param,
-                    result[3];
+                    result[COLUMNS];
     unsigned long   name_len = strlen(name),
-                    lengths[3];
-    unsigned int    profileid = 0;
-    char            account[ACCOUNT_NAME_SIZE + 1],
-                    password[ACCOUNT_PASSWORD_SIZE + 1];
-    my_bool         is_null[3];
+                    lengths[COLUMNS];
+    my_bool         is_null[COLUMNS];
+    fesl_account    acc;
     int             ret = FESL_ACCOUNT_ERROR,
-                    fetched;
+                    fetched,
+                    i;
 
     stmt = mysql_stmt_init(db->conn);
     if(!stmt) return FESL_ACCOUNT_ERROR;
@@ -100,17 +117,21 @@ static int db_query(db_store *db, const char *name, fesl_account *out) {
     param.length        = &name_len;
     if(mysql_stmt_bind_param(stmt, &param)) goto quit;
 
+    // the buffers are one byte larger than the columns, for the NUL
+    memset(&acc, 0, sizeof(acc));
     memset(result, 0, sizeof(result));
-    result[0].buffer_type   = MYSQL_TYPE_LONG;
-    result[0].is_unsigned   = 1;
-    result[0].buffer        = &profileid;
-    result[1].buffer_type   = MYSQL_TYPE_STRING;
-    result[1].buffer        = account;
-    result[1].buffer_length = sizeof(account);
-    result[2].buffer_type   = MYSQL_TYPE_STRING;
-    result[2].buffer        = password;
-    result[2].buffer_length = sizeof(password);
-    for(int i = 0; i < 3; i++) {
+    bind_uint(&result[COL_ID], &acc.user_id);
+    bind_string(&result[COL_NAME], acc.name, sizeof(acc.name));
+    bind_string(&result[COL_PASSWORD], acc.password, sizeof(acc.password));
+    bind_string(&result[COL_EMAIL], acc.email, sizeof(acc.email));
+    bind_string(&result[COL_COUNTRY], acc.country, sizeof(acc.country));
+    bind_uint(&result[COL_DOB_YEAR], &acc.dob_year);
+    bind_uint(&result[COL_DOB_MONTH], &acc.dob_month);
+    bind_uint(&result[COL_DOB_DAY], &acc.dob_day);
+    bind_string(&result[COL_ZIP], acc.zip_code, sizeof(acc.zip_code));
+    bind_uint(&result[COL_EA_MAIL], &acc.ea_mail_flag);
+    bind_uint(&result[COL_THIRD_PARTY_MAIL], &acc.third_party_mail_flag);
+    for(i = 0; i < COLUMNS; i++) {
         result[i].length  = &lengths[i];
         result[i].is_null = &is_null[i];
     }
@@ -122,15 +143,22 @@ static int db_query(db_store *db, const char *name, fesl_account *out) {
         ret = FESL_ACCOUNT_NOT_FOUND;
     } else if((fetched == 0) || (fetched == MYSQL_DATA_TRUNCATED)) {
         // a value too long for our buffers can't belong to a usable account
-        if((fetched == MYSQL_DATA_TRUNCATED) || is_null[0] || is_null[1] || is_null[2] || !profileid) {
-            fprintf(stderr, "database: account %u has an invalid row, ignored\n", profileid);
+        if((fetched == MYSQL_DATA_TRUNCATED) || is_null[COL_ID] || is_null[COL_NAME] ||
+           is_null[COL_PASSWORD] || !acc.user_id) {
+            fprintf(stderr, "database: account %u has an invalid row, ignored\n", acc.user_id);
             ret = FESL_ACCOUNT_NOT_FOUND;
         } else {
-            memset(out, 0, sizeof(fesl_account));
-            memcpy(out->name, account, lengths[1]);
-            memcpy(out->password, password, lengths[2]);
-            out->user_id = profileid;
-            out->status  = ACCOUNT_ACTIVE;
+            // strings are NUL terminated by the memset, NULLs become empty or 0
+            for(i = 0; i < COLUMNS; i++) {
+                if(!is_null[i]) continue;
+                if(result[i].buffer_type == MYSQL_TYPE_STRING) ((char *)result[i].buffer)[0] = 0;
+                else *(unsigned int *)result[i].buffer = 0;
+            }
+            for(i = 0; i < COLUMNS; i++) {
+                if((result[i].buffer_type == MYSQL_TYPE_STRING) && !is_null[i]) ((char *)result[i].buffer)[lengths[i]] = 0;
+            }
+            acc.status = ACCOUNT_ACTIVE;
+            *out = acc;
             ret = FESL_ACCOUNT_FOUND;
         }
     }

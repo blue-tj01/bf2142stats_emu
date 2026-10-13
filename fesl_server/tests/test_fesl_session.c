@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include "fesl.h"
 #include "fesl_session.h"
 #include "accounts.h"
@@ -116,6 +117,25 @@ static const fesl_packet *find_answer(const packet_list *list, const char *comma
     return NULL;
 }
 
+// the account of the captures, with the profile the captured GetAccount sent
+static int captured_find(fesl_account_store *store, const char *name, fesl_account *out) {
+    (void)store;
+    if(strcasecmp(name, "Tema567")) return FESL_ACCOUNT_NOT_FOUND;
+    memset(out, 0, sizeof(*out));
+    strcpy(out->name, "Tema567");
+    strcpy(out->password, "123456");
+    out->user_id = 10;
+    strcpy(out->email, "tema567@list.ru");
+    strcpy(out->country, "RU");
+    out->dob_year  = 1991;
+    out->dob_month = 1;
+    out->dob_day   = 7;
+    strcpy(out->zip_code, "624760");
+    out->ea_mail_flag          = 1;
+    out->third_party_mail_flag = 1;
+    return FESL_ACCOUNT_FOUND;
+}
+
 static void test_replay(const char *path, int exact_time) {
     static const char   *hello_skip[] = { "curTime", NULL },
                         *memcheck_skip[] = { "salt", NULL },
@@ -132,7 +152,8 @@ static void test_replay(const char *path, int exact_time) {
                 *mine;
     uint32_t    rnd = 1;
     size_t      i;
-    int         inventories = 0;
+    int         inventories = 0,
+                accounts_answered = 0;
     char        curtime[64];
 
     printf("session replay %s\n", path);
@@ -144,7 +165,7 @@ static void test_replay(const char *path, int exact_time) {
 
     // every client packet in capture order, the ones we don't handle yet
     // just get an error answer
-    fesl_accounts_store_init(&store, &accounts);
+    store.find = captured_find;
     fesl_session_init(&session, &store, counter_random, &rnd);
     for(i = 0; i < client.count; i++) {
         CHECK(fesl_session_handle(&session, &client.pkt[i], D1_HELLO_TIME, &out) == FESL_SESSION_CONTINUE);
@@ -187,9 +208,15 @@ static void test_replay(const char *path, int exact_time) {
             CHECK(mine != NULL);
             if(mine) compare_answer(mine, captured, NULL, 1);
             inventories++;
+        } else if(!strcmp(fesl_txn(captured), "GetAccount")) {
+            mine = find_answer(&ours, captured->command, captured->number, "GetAccount");
+            CHECK(mine != NULL);
+            if(mine) compare_answer(mine, captured, NULL, 1);   // every field, in order
+            accounts_answered++;
         }
     }
     CHECK(inventories == 3);
+    CHECK(accounts_answered == 1);
 
     free_list(&ours);
     free_list(&client);
@@ -441,6 +468,82 @@ static int down_find(fesl_account_store *store, const char *name, fesl_account *
     return FESL_ACCOUNT_FOUND;
 }
 
+// an e-mail with a newline must not add a field to the answer
+static int odd_find(fesl_account_store *store, const char *name, fesl_account *out) {
+    (void)store;
+    (void)name;
+    memset(out, 0, sizeof(*out));
+    strcpy(out->name, "odd%name");
+    strcpy(out->password, "pw");
+    out->user_id = 7;
+    strcpy(out->email, "a\nTXN=Login\r%b");
+    strcpy(out->country, "US");
+    return FESL_ACCOUNT_FOUND;
+}
+
+static void test_get_account(void) {
+    fesl_accounts accounts;
+    fesl_account_store store;
+    fesl_session s;
+    packet_list ans;
+    uint32_t    rnd = 1;
+
+    // only after a Login
+    CHECK(fesl_accounts_parse(&accounts, ACCOUNTS) == 0);
+    fesl_accounts_store_init(&store, &accounts);
+    fesl_session_init(&s, &store, counter_random, &rnd);
+    CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 2, "TXN=GetAccount\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 2, "GetAccount", "99");
+    free_list(&ans);
+
+    // the accounts file has no profile: empty strings and zeros
+    CHECK(handle_one(&s, "acct", 3, "TXN=Login\nname=other\npassword=secret\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 4, "TXN=GetAccount\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1);
+    if(ans.count == 1) {
+        CHECK(ans.pkt[0].number == 4);
+        CHECK(ans.pkt[0].count == 14);
+        CHECK_STR(fesl_get(&ans.pkt[0], "name"), "other");
+        CHECK_STR(fesl_get(&ans.pkt[0], "profileID"), "11");
+        CHECK_STR(fesl_get(&ans.pkt[0], "userId"), "11");
+        CHECK_STR(fesl_get(&ans.pkt[0], "email"), "");
+        CHECK_STR(fesl_get(&ans.pkt[0], "dobYear"), "0");
+        CHECK_STR(fesl_get(&ans.pkt[0], "gender"), "U");
+    }
+    free_list(&ans);
+
+    // a failed new Login logs out, so GetAccount fails again
+    CHECK(handle_one(&s, "acct", 5, "TXN=Login\nname=other\npassword=bad\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 6, "TXN=GetAccount\n", &ans) == FESL_SESSION_CONTINUE);
+    check_error(&ans, "acct", 6, "GetAccount", "99");
+    free_list(&ans);
+    fesl_accounts_free(&accounts);
+
+    // text from the store is escaped, in Login and GetAccount
+    memset(&store, 0, sizeof(store));
+    store.find = odd_find;
+    fesl_session_init(&s, &store, counter_random, &rnd);
+    CHECK(handle_one(&s, "fsys", 1, "TXN=Hello\n", &ans) == FESL_SESSION_CONTINUE);
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 2, "TXN=Login\nname=odd\npassword=pw\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1);
+    if(ans.count == 1) CHECK_STR(fesl_get(&ans.pkt[0], "displayName"), "odd%25name");
+    free_list(&ans);
+    CHECK(handle_one(&s, "acct", 3, "TXN=GetAccount\n", &ans) == FESL_SESSION_CONTINUE);
+    CHECK(ans.count == 1);
+    if(ans.count == 1) {
+        CHECK(ans.pkt[0].count == 14);
+        CHECK_STR(fesl_txn(&ans.pkt[0]), "GetAccount");
+        CHECK_STR(fesl_get(&ans.pkt[0], "email"), "a%0aTXN=Login%0d%25b");
+        CHECK_STR(fesl_get(&ans.pkt[0], "name"), "odd%25name");
+    }
+    free_list(&ans);
+}
+
 static void test_store_errors(void) {
     fesl_account_store store = { .find = down_find };
     fesl_session s;
@@ -529,6 +632,7 @@ int main(int argc, char *argv[]) {
     test_session_errors();
     test_account_status();
     test_store_errors();
+    test_get_account();
 
     snprintf(path, sizeof(path), "%s/d1/dump2_ssl.pcap", dir);
     test_replay(path, 1);

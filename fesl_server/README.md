@@ -10,7 +10,7 @@ This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj0
 > [!NOTE]
 > The patched game executables in [`cracked_exe/`](../cracked_exe) and the [`exe_patch/`](../exe_patch) patches for the dedicated server include aluigi's FESL certificate check remover. With them, the game accepts this server's self-signed certificate. The connection is still SSLv3, so build the server with `make ssl3`.
 
-> **Status: early development.** The protocols are being reverse engineered from captured traffic. The FESL server handles Hello, Login and GetObjectInventory; the other requests after Login are not implemented yet.
+> **Status: early development.** The protocols are being reverse engineered from captured traffic. The FESL server handles Hello, Login, GetAccount and GetObjectInventory; the other requests after Login are not implemented yet.
 
 ## Contents
 
@@ -28,7 +28,7 @@ This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj0
 
 - [x] Capture game traffic, including SSL-encrypted FESL sessions
 - [x] FESL packet decoder and encoder, with tests that replay the captures
-- [x] FESL server: Hello, MemCheck, Login, GetObjectInventory and keep-alive Ping
+- [x] FESL server: Hello, MemCheck, Login, GetAccount, GetObjectInventory and keep-alive Ping
 - [ ] FESL entitlements, sub-accounts and GameSpy pre-auth
 - [ ] GameSpy protocols and sub-accounts
 - [x] Accounts from the `account` table of the stats database (MySQL / MariaDB)
@@ -107,6 +107,7 @@ The server answers:
 
 - **Hello**, followed by an unsolicited MemCheck with packet number 0.
 - **Login**, checked against the accounts file or the `account` table. With the database, `profileId` and `userId` are the account's `profileid`, and `displayName` is the name as stored.
+- **GetAccount**, after a Login, with the profile from the `account` table: e-mail, country, date of birth, zip code and mail flags, in the order of the captured answer. The table has no gender, so it sends `U` as the capture did. Accounts from the accounts file have no profile, so those fields are empty or 0.
 - **GetObjectInventory**, always with an empty inventory.
 
 It also sends a Ping every 30 seconds and closes connections that stay silent for 3 intervals. Any other request gets a "Not implemented" error (`errorCode=99`).
@@ -124,6 +125,7 @@ Login errors:
 > [!NOTE]
 > - Passwords are stored in clear text, both in the accounts file and in the `account` table (as `fesl_login_server.exe` expects). Don't reuse real passwords.
 > - The name is passed to the database as a query parameter, never pasted into the SQL.
+> - Text from accounts (names, e-mails, zip codes) is sent with control characters and `%` escaped as `%XX`, so a stored value can't add fields to a packet.
 > - Codes 101 and 122 are used by the BFBC2 and NFS Carbon emulators, and the others were checked against the NFS Carbon client. None has been checked against BF2142.
 > - The MemCheck numbering and the fixed 30-second Ping follow EA's real NFS Carbon servers. Our BF2142 captures, made against an emulator, reused the Hello number for MemCheck.
 > - An unpatched game rejects the self-signed certificate. The patched executables in [`cracked_exe/`](../cracked_exe) and the [`exe_patch/`](../exe_patch) patches remove that check.

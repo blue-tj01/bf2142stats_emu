@@ -48,6 +48,27 @@ overflow:
     a->overflow = 1;
 }
 
+// account text (names, e-mails) can contain anything: control characters
+// and '%' are sent %XX-escaped, so a newline can't start a new field
+static void add_text(answer *a, const char *key, const char *value) {
+    static const char   hex[] = "0123456789abcdef";
+    char                buf[3 * 128 + 1];
+    size_t              n = 0;
+    const unsigned char *p;
+
+    for(p = (const unsigned char *)value; *p && (n + 3 < sizeof(buf)); p++) {
+        if((*p < 0x20) || (*p == 0x7f) || (*p == '%')) {
+            buf[n++] = '%';
+            buf[n++] = hex[*p >> 4];
+            buf[n++] = hex[*p & 15];
+        } else {
+            buf[n++] = *p;
+        }
+    }
+    buf[n] = 0;
+    add(a, key, "%s", buf);
+}
+
 static int output_append(fesl_output *out, const char *command, uint8_t type, uint32_t number, const answer *a) {
     fesl_packet pkt;
     uint8_t     *tmp;
@@ -205,7 +226,7 @@ static int handle_login(fesl_session *s, const fesl_packet *req, fesl_output *ou
     add(&a, "TXN", "Login");
     add(&a, "profileId", "%u", acc->user_id);
     add(&a, "userId", "%u", acc->user_id);
-    add(&a, "displayName", "%s", acc->name);
+    add_text(&a, "displayName", acc->name);
     add(&a, "lkey", "%s", s->lkey);
     encrypted = fesl_get(req, "returnEncryptedInfo");
     if(encrypted && !strcmp(encrypted, "1")) {
@@ -219,6 +240,30 @@ static int handle_login(fesl_session *s, const fesl_packet *req, fesl_output *ou
     add(&a, "entitledGameFeatureWrappers.0.entitlementExpirationDate", "");
     add(&a, "entitledGameFeatureWrappers.0.message", "");
     add(&a, "entitledGameFeatureWrappers.0.entitlementExpirationDays", "-1");
+    return reply(out, req, &a);
+}
+
+// field order and spelling (profileID) as in the captured answer; the table
+// has no gender or country description, the capture sent U and the code
+static int handle_get_account(fesl_session *s, const fesl_packet *req, fesl_output *out) {
+    answer              a = { .len = 0 };
+    const fesl_account  *acc = s->account;
+
+    if(!acc) return reply_error(out, req, FESL_ERROR_SYSTEM, "Login required");
+    add(&a, "TXN", "GetAccount");
+    add_text(&a, "name", acc->name);
+    add(&a, "profileID", "%u", acc->user_id);
+    add(&a, "userId", "%u", acc->user_id);
+    add_text(&a, "email", acc->email);
+    add_text(&a, "countryCode", acc->country);
+    add_text(&a, "countryDesc", acc->country);
+    add(&a, "dobDay", "%u", acc->dob_day);
+    add(&a, "dobMonth", "%u", acc->dob_month);
+    add(&a, "dobYear", "%u", acc->dob_year);
+    add_text(&a, "zipCode", acc->zip_code);
+    add(&a, "gender", "U");
+    add(&a, "eaMailFlag", "%u", acc->ea_mail_flag);
+    add(&a, "thirdPartyMailFlag", "%u", acc->third_party_mail_flag);
     return reply(out, req, &a);
 }
 
@@ -253,6 +298,7 @@ int fesl_session_handle(fesl_session *s, const fesl_packet *req, time_t now, fes
         if(!strcmp(txn, "GetObjectInventory")) return handle_object_inventory(req, out);
     } else if(!strcmp(req->command, "acct")) {
         if(!strcmp(txn, "Login"))    return handle_login(s, req, out);
+        if(!strcmp(txn, "GetAccount")) return handle_get_account(s, req, out);
     }
     return reply_error(out, req, FESL_ERROR_SYSTEM, "Not implemented");
 }

@@ -241,10 +241,14 @@ def sql(query):
 def run_db(cert, log):
     names = ",".join("'%s'" % n for n in TEST_ACCOUNTS)
     sql("DELETE FROM account WHERE account IN (%s)" % names)
-    for name, password in zip(TEST_ACCOUNTS, ("123456", "other-pass")):
-        sql("INSERT INTO account (account, password, email, countryCode, DOBYear, DOBMonth, DOBDay, "
-            "zipCode, eaMailFlag, thirdPartyMailFlag) VALUES ('%s', '%s', 'test@example.com', 'US', "
-            "1990, 1, 1, '', 0, 0)" % (name, password))
+    # Tema567 gets the profile of the captured GetAccount; the other account
+    # has no zip code (NULL) and a newline in its e-mail
+    sql("INSERT INTO account (account, password, email, countryCode, DOBYear, DOBMonth, DOBDay, "
+        "zipCode, eaMailFlag, thirdPartyMailFlag) VALUES ('Tema567', '123456', 'tema567@list.ru', "
+        "'RU', 1991, 1, 7, '624760', 1, 1)")
+    sql("INSERT INTO account (account, password, email, countryCode, DOBYear, DOBMonth, DOBDay, "
+        "zipCode, eaMailFlag, thirdPartyMailFlag) VALUES ('fesl_test_other', 'other-pass', "
+        "CONCAT('a', CHAR(10), 'b@example.com'), 'US', 1990, 12, 31, NULL, 0, 1)")
     user_id = sql("SELECT profileid FROM account WHERE account = 'Tema567'")[0][0]
     user = os.environ.get("FESL_DB_USER", "")
 
@@ -255,6 +259,35 @@ def run_db(cert, log):
               "case-insensitive login: %r" % answer)
         answer = login(port, use_ssl, "fesl_test_other", "other-pass")
         check("errorCode" not in answer and answer.get("userId") != user_id, "second account: %r" % answer)
+
+        # GetAccount answers from the table, in the order of the capture
+        c = Client(port, use_ssl)
+        c.send("fsys", 0x80000001, HELLO)
+        c.recv()
+        c.recv()
+        c.send("acct", 0x80000002, LOGIN.format(password="123456"))
+        c.recv()
+        c.send("acct", 0x8000000b, "TXN=GetAccount\n")
+        cmd, word, account = c.recv()
+        c.close()
+        expected = {"TXN": "GetAccount", "name": "Tema567", "profileID": user_id, "userId": user_id,
+                    "email": "tema567@list.ru", "countryCode": "RU", "countryDesc": "RU",
+                    "dobDay": "7", "dobMonth": "1", "dobYear": "1991", "zipCode": "624760",
+                    "gender": "U", "eaMailFlag": "1", "thirdPartyMailFlag": "1"}
+        check((cmd, word) == ("acct", 0x8000000b) and account == expected
+              and list(account) == list(expected), "GetAccount: %r" % account)
+
+        c = Client(port, use_ssl)
+        c.send("fsys", 0x80000001, HELLO)
+        c.recv()
+        c.recv()
+        c.send("acct", 0x80000002, LOGIN.replace("Tema567", "fesl_test_other").format(password="other-pass"))
+        c.recv()
+        c.send("acct", 0x80000003, "TXN=GetAccount\n")
+        account = c.recv()[2]
+        c.close()
+        check(account.get("zipCode") == "" and account.get("email") == "a%0ab@example.com"
+              and account.get("dobDay") == "31" and len(account) == 14, "GetAccount, NULL zip: %r" % account)
 
         # the name is a query parameter, so SQL in it is just a wrong name
         for name in ("x' OR '1'='1", "Tema567' -- ", "Tema567\\", "A" * 46):
