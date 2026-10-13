@@ -65,8 +65,9 @@ your.external.ip  stella.master.gamespy.com
 
 ### WebServer
 
-**NOTE**: Stats requires PHP >= 5.3.8
-**UPD (07.01.2020).** Not working on PHP >= 7.0. I can 100% guarantee that it works on PHP 5.4.22. I advise you to use XAMPP 1.8.2
+**NOTE**: Stats runs on modern PHP (tested on PHP 8.3 with MariaDB 10.11) and should still run on PHP 5.4+. On PHP 7 and newer the `mysqli` extension must be enabled (it is in XAMPP and most PHP packages); `include/compat.php` maps the old `mysql_*` calls onto it.
+
+**NOTE**: On MySQL 8, the Fesl login server's old `libmySQL.dll` can't use the default `caching_sha2_password` login method. Create the database user with `IDENTIFIED WITH mysql_native_password BY 'yourpassword'`.
 
 1. Unzip folder "web" to your localhost folder (**WARNING**: Stats system won't work at another location!)
 2. Open ./include/_ccconfig.php and change $db_host, $db_name, $db_user, $db_pass to yours, which you installed in Fesl Login (step 4)

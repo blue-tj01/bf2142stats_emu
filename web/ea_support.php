@@ -18,10 +18,10 @@ class ea_stats
   var $SBox;
   var $SBoxInv;
 
-  function ea_stats()
+  function __construct()
   {
-    $this->encryptKeys = &$this->getEncryptKeys();
-    $this->decryptKeys = &$this->getDecryptKeys();
+    $this->encryptKeys = $this->getEncryptKeys();
+    $this->decryptKeys = $this->getDecryptKeys();
 
     $this->SBox = 
           $this->hex2str('637C777BF26B6FC53001672BFED7AB76CA82C97DFA5947F0ADD4A2AF9CA472C0').

@@ -28,6 +28,7 @@ if(isset($_GET["scale"]) AND $_GET["scale"] != "") {	$scale = $_GET["scale"];	} 
 
 require_once("ea_support.php");
 require_once('include/_ccconfig.php');
+require_once('include/compat.php');
 
 $bfcoding  = new ea_stats();
 $code = $bfcoding->str2hex($bfcoding->DefDecryptBlock($bfcoding->getBase64Decode($getAUTH)));

@@ -87,10 +87,7 @@ if (!checkIpAuth($game_hosts)) {
 $rawdata = file_get_contents('php://input');
 //$rawdata = file_get_contents('data.txt');
 if ($LOG) {
-$fp = fopen("logs/rawdata".time().".txt","a+");
-fwrite($fp,$rawdata);
-fflush($fp);
-fclose($fp);
+@file_put_contents("logs/rawdata".time().".txt", $rawdata, FILE_APPEND);
 }
 //$rawdata = file_get_contents('sinthetixData.txt');
 file_put_contents("sinthetixData.txt", $rawdata);
@@ -104,22 +101,28 @@ if ($rawdata) {
 }
 
 // Make key/value pairs
-$prefix = $gooddata[0];
-$mapname = strtolower($gooddata[1]);
+// Both end up in SQL queries and file names
+$prefix = preg_replace('/[^A-Za-z0-9_\-]/', '', $gooddata[0]);
+$mapname = strtolower(preg_replace('/[^A-Za-z0-9_\-]/', '', $gooddata[1]));
 $badtime = false;
-for ($x = 2; $x < count($gooddata); $x += 2) {
-    if ($gooddata[$x + 1] >= 184467440000) {
+for ($x = 2; $x + 1 < count($gooddata); $x += 2) {
+    // is_numeric(): PHP 8 compares non-numeric strings (e.g. nicknames) to
+    // numbers as strings, so "Alpha" >= 184467440000 would be true
+    if (is_numeric($gooddata[$x + 1]) && $gooddata[$x + 1] >= 184467440000) {
         $badtime = true;
         //$gooddata[$x + 1] = $gooddata[$x + 1] - 184467440000;
+    }
+    // Empty stat values are used in arithmetic below, which is a fatal
+    // TypeError on PHP 8; treat them as 0 like older PHP did. Nicknames and
+    // the mod name are the only text values.
+    if ($gooddata[$x + 1] === '' && $gooddata[$x] != 'v' && strpos($gooddata[$x], 'nick_') !== 0) {
+        $gooddata[$x + 1] = '0';
     }
     $data[$gooddata[$x]] = $gooddata[$x + 1];
 }
 //!print_r($data);
 if ($LOG) {
-$fp = fopen("logs/data".time().".txt","a+");
-fwrite($fp,print_r($data,true));
-fflush($fp);
-fclose($fp);
+@file_put_contents("logs/data".time().".txt", print_r($data,true), FILE_APPEND);
 }
 // Import Backend Awards Data
 require('include/data.awards.php');
@@ -451,7 +454,7 @@ if ($data['pc'] >= $cfg->get('stats_players_min') && $globals['roundtime'] >= $c
 
                 //nick
                 if (!isset($data2['nick'])) {
-                    $query3p .= " `nick`='" . $data["nick_$x"] . "',";
+                    $query3p .= " `nick`='" . mysql_real_escape_string($data["nick_$x"]) . "',";
                 }
 
                 //ban	total bans na server
@@ -984,11 +987,8 @@ if ($data['pc'] >= $cfg->get('stats_players_min') && $globals['roundtime'] >= $c
                     $res = mysql_query($query);
 			if (!$res) {
 if ($LOG) {
-$fp = fopen("logs/error".time().".txt","a+");
-fwrite($fp,$query."
-".mysql_error());
-fflush($fp);
-fclose($fp);
+@file_put_contents("logs/error".time().".txt", $query."
+".mysql_error(), FILE_APPEND);
 }
 }
 
@@ -1368,7 +1368,7 @@ fclose($fp);
         if (file_exists(chkPath($cfg->get('stats_logs_store')) . $ip_s)) {
             
         } else {
-            mkdir(chkPath($cfg->get('stats_logs_store')) . $ip_s, 0777);
+            mkdir(chkPath($cfg->get('stats_logs_store')) . $ip_s, 0777, true);
         }
 
         $fn_src = chkPath($cfg->get('stats_logs')) . $stats_filename;
@@ -1475,10 +1475,7 @@ function checkBackendAwards() {
 $string = ob_get_contents();
 echo $string;
 if ($LOG) {
-$fp = fopen("logs/output".time().".txt","a+");
-fwrite($fp,$string);
-fflush($fp);
-fclose($fp);
+@file_put_contents("logs/output".time().".txt", $string, FILE_APPEND);
 }
 
 ?>

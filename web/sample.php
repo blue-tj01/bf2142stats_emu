@@ -5,7 +5,7 @@
 ini_set('user_agent',"GameSpyHTTP/1.0");
 require_once("ea_support.php");
 
-$bfcoding  = &new ea_stats();
+$bfcoding  = new ea_stats();
 
 $timestamp = '';
 @$timestamp = $_REQUEST['timestamp'];
