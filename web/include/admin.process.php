@@ -223,7 +223,8 @@ function processImportLogs() {
 			}
 		}
 		$file_p = $file[1];
-		$fh = fsockopen('195.140.177.252', 80);
+		// Re-post to this server's own bf2142statistics.php
+		$fh = fsockopen('127.0.0.1', 80);
 		
 		fwrite($fh, "POST /bf2142statistics.php HTTP/1.1\r\n");
 		fwrite($fh, "HOST: localhost\r\n");
