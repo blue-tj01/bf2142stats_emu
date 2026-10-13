@@ -10,7 +10,7 @@ This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj0
 > [!NOTE]
 > The patched game executables in [`cracked_exe/`](../cracked_exe) and the [`exe_patch/`](../exe_patch) patches for the dedicated server include aluigi's FESL certificate check remover. With them, the game accepts this server's self-signed certificate. The connection is still SSLv3, so build the server with `make ssl3`.
 
-> **Status: early development.** The protocols are being reverse engineered from captured traffic. The FESL server handles Hello, Login, GetAccount and GetObjectInventory; the other requests after Login are not implemented yet.
+> **Status: early development.** The protocols are being reverse engineered from captured traffic. The FESL server answers every request of the captured logins, from Hello to GameSpyPreAuth. GameSpy itself, and FESL requests the captures don't show (creating accounts or soldiers), are not implemented yet.
 
 ## Contents
 
@@ -29,7 +29,8 @@ This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj0
 - [x] Capture game traffic, including SSL-encrypted FESL sessions
 - [x] FESL packet decoder and encoder, with tests that replay the captures
 - [x] FESL server: Hello, MemCheck, Login, GetAccount, GetObjectInventory and keep-alive Ping
-- [ ] FESL entitlements, sub-accounts and GameSpy pre-auth
+- [x] FESL unlock bundles, sub-accounts (soldiers) and GameSpy pre-auth
+- [ ] FESL account and soldier creation (AddAccount, AddSubAccount, ...)
 - [ ] GameSpy protocols and sub-accounts
 - [x] Accounts from the `account` table of the stats database (MySQL / MariaDB)
 - [ ] Other database backends (PostgreSQL, SQLite3)
@@ -87,11 +88,12 @@ To use the accounts of the stats database instead, the same `account` table `fes
 FESL_DB_PASS=yourpassword ./fesl_server -c cert.pem -dbhost 127.0.0.1 -dbname bf2142 -dbuser fesl
 ```
 
-The server only reads the table, so give it a user with `SELECT` rights only:
+The server reads the tables, and writes only the GameSpy pre-auth of a soldier (see GameSpyPreAuth below), so give it these rights:
 
 ```sql
 CREATE USER 'fesl'@'localhost' IDENTIFIED BY 'yourpassword';
 GRANT SELECT ON bf2142.* TO 'fesl'@'localhost';
+GRANT UPDATE (challenge, authtoken) ON bf2142.gamespy_players TO 'fesl'@'localhost';
 ```
 
 | Option | Meaning |
@@ -109,6 +111,10 @@ The server answers:
 - **Login**, checked against the accounts file or the `account` table. With the database, `profileId` and `userId` are the account's `profileid`, and `displayName` is the name as stored.
 - **GetAccount**, after a Login, with the profile from the `account` table: e-mail, country, date of birth, zip code and mail flags, in the order of the captured answer. The table has no gender, so it sends `U` as the capture did. Accounts from the accounts file have no profile, so those fields are empty or 0.
 - **GetObjectInventory**, always with an empty inventory.
+- **GetEntitlementByBundle**, for the unlock bundles `REG-PC-BF2142-UNLOCK-1` to `3`: error 3012, "The customer has never had entitlement for this bundle.", word for word as captured.
+- **GetSubAccounts**, the soldiers of the account: the `subaccount` rows of its `profileid`, in id order (up to 16). An account from the accounts file has one soldier, itself, as in the capture.
+- **LoginSubAccount**, for one of those soldiers (case-insensitive name): a new `lkey`, the soldier's id as `profileId` and the account's as `userId`. Any other name gets error 101.
+- **GameSpyPreAuth**, after LoginSubAccount: a random `challenge` and `ticket`, the ticket the game then shows the GameSpy login. With the database they are also saved as `challenge` and `authtoken` of the soldier's `gamespy_players` row (`id` = the soldier's id), where the GameSpy login of `fesl_login_server.exe` looks for them. If that row is missing or can't be written, the server logs it and still answers, but that soldier's GameSpy login will fail.
 
 It also sends a Ping every 30 seconds and closes connections that stay silent for 3 intervals. Any other request gets a "Not implemented" error (`errorCode=99`).
 

@@ -32,6 +32,10 @@
 #define FESL_ERROR_ACCOUNT_PENDING  105
 #define FESL_ERROR_TOO_MANY_ATTEMPTS 121
 #define FESL_ERROR_BAD_PASSWORD     122
+#define FESL_ERROR_NO_ENTITLEMENT   3012    // GetEntitlementByBundle, as captured
+
+#define FESL_CHALLENGE_SIZE         8       // GameSpyPreAuth, like the captured answers
+#define FESL_TICKET_SIZE            90
 
 #define FESL_MAX_LOGIN_ATTEMPTS     5   // failed Logins per connection before 121
 
@@ -55,6 +59,8 @@ typedef struct {
     int         hello_done;
     const fesl_account *account;        // &account_data when logged in, else NULL
     fesl_account account_data;
+    const fesl_sub_account *sub_account; // &sub_account_data after LoginSubAccount, else NULL
+    fesl_sub_account sub_account_data;
     int         failed_logins;
     char        lkey[FESL_LKEY_SIZE + 1];
 } fesl_session;

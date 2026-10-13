@@ -155,11 +155,12 @@ jobs:
         run: make -C tests test
       - name: Build the FESL server
         run: make -C src/server
-      - name: Load the schema and add a read-only database user for the server
+      - name: Load the schema and add a database user with the server's rights
         run: |
           $MYSQL < ../database/bf2142.sql
-          # the server only needs SELECT; the default password method of each server
-          $MYSQL -e "CREATE USER 'fesl'@'%' IDENTIFIED BY 'fesl-pass'; GRANT SELECT ON bf2142.* TO 'fesl'@'%'"
+          # SELECT, plus UPDATE of the GameSpy pre-auth columns; the default
+          # password method of each database server
+          $MYSQL -e "CREATE USER 'fesl'@'%' IDENTIFIED BY 'fesl-pass'; GRANT SELECT ON bf2142.* TO 'fesl'@'%'; GRANT UPDATE (challenge, authtoken) ON bf2142.gamespy_players TO 'fesl'@'%'"
       - name: Server end-to-end test (TLS, plain TCP and the account table)
         working-directory: fesl_server/tests
         env:
