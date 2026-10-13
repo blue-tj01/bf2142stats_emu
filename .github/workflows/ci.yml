@@ -118,3 +118,35 @@ jobs:
       - name: Stop
         if: always()
         run: docker compose down -v
+
+  fesl:
+    name: FESL server tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: fesl_server
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenSSL headers
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Decoder and session tests (replay of the captures)
+        run: make -C tests test
+      - name: Build the FESL server
+        run: make -C src/server
+      - name: Server end-to-end test (TLS and plain TCP)
+        working-directory: fesl_server/tests
+        run: python3 test_server.py ../src/server/fesl_server
+      - name: Decoder and session tests with ASan/UBSan
+        run: |
+          make -C tests clean
+          make -C tests test SANITIZE=1
+
+  stcppipe:
+    name: stcppipe build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OpenSSL headers
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev
+      - name: Build stcppipe against the system OpenSSL
+        run: make -C fesl_server/src

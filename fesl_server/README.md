@@ -1,9 +1,14 @@
-# 2142 Master Server
+# Open FESL server
 
-[![test](https://github.com/blue-tj01/2142master/actions/workflows/test.yml/badge.svg)](https://github.com/blue-tj01/2142master/actions/workflows/test.yml)
-[![License: GPL v2](https://img.shields.io/badge/license-GPLv2-blue.svg)](LICENSE)
+[![CI](https://github.com/blue-tj01/bf2142stats_emu/actions/workflows/ci.yml/badge.svg)](https://github.com/blue-tj01/bf2142stats_emu/actions/workflows/ci.yml)
+[![License: GPL v2](https://img.shields.io/badge/license-GPLv2-blue.svg)](../LICENSE)
 
-This project aims to bring **Battlefield 2142** online play back by replacing the backend services EA shut down: the FESL login service (`fesl.ea.com`) and the GameSpy services.
+An open-source replacement for the FESL login service (`fesl.ea.com`) that **Battlefield 2142** used, and in time for the GameSpy services too. It is meant to replace the closed [`fesl_login_server.exe`](../fesl_login_server) of this repository, which can't be audited or fixed.
+
+This folder was imported from [blue-tj01/2142master](https://github.com/blue-tj01/2142master), with its full history.
+
+> [!NOTE]
+> The patched game executables in [`cracked_exe/`](../cracked_exe) and the [`exe_patch/`](../exe_patch) patches for the dedicated server include aluigi's FESL certificate check remover. With them, the game accepts this server's self-signed certificate. The connection is still SSLv3, so build the server with `make ssl3`.
 
 > **Status: early development.** The protocols are being reverse engineered from captured traffic. The FESL server handles Hello, Login and GetObjectInventory; the other requests after Login are not implemented yet.
 
@@ -142,11 +147,11 @@ See [`stuff/info/`](stuff/info) for the original notes.
 
 ## Contributing
 
-Fork the repository and open a [pull request](https://github.com/blue-tj01/2142master/pulls). New captures, protocol notes and tests are as welcome as code. Please run `make -C tests test` before submitting.
+Fork the repository and open a [pull request](https://github.com/blue-tj01/bf2142stats_emu/pulls). New captures, protocol notes and tests are as welcome as code. Please run `make -C tests test` before submitting.
 
 ## License
 
-The project is licensed under the [GNU GPL v2](LICENSE).
+This folder is licensed under the [GNU GPL v2](../LICENSE), like the rest of the repository.
 
 Bundled third-party code keeps its own license:
 
