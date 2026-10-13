@@ -29,7 +29,7 @@ A self-hosted replacement for the shut-down EA / GameSpy backend of **Battlefiel
 - [Security notes](#security-notes)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
-- [Credits and license](#credits-and-license)
+- [Credits and licensing](#credits-and-licensing)
 
 ## How it works
 
@@ -136,6 +136,9 @@ The database is kept in the `db-data` volume, and logs in `web-logs` and `web-de
    your.external.ip  stella.master.gamespy.com
    ```
 5. Run `_launch.bat`.
+
+> [!WARNING]
+> Don't use `_launch_and_restoresrv.bat` (the `-restore_srv` option) on a public server. It emails players their password in plain text, and it builds the mail command from the e-mail address stored for the account, so a crafted address may be able to run commands on your machine.
 
 > [!TIP]
 > You can change the license agreement players see in `fesl_login_server/license.txt`. The game doesn't support line breaks, so it will be shown as a single line.
@@ -268,6 +271,7 @@ The 1.51 executable has the server IP built in as `192.168.1.3`. Replace it with
 - Your database password lives only in `web/include/_ccconfig.php`, which git ignores.
 - `admin.php` only answers addresses in `$admin_hosts` (this machine by default), needs a login, and checks a per-session token on every form so other sites can't submit them for you.
 - The token format is EA's original, and its key is public in `ea_support.php`. Tokens are a convenience check, not real authentication.
+- The Fesl login server is a closed binary with no source in this repository, so it can't be audited or fixed here. It stores account passwords in plain text, and the queries embedded in it appear to insert the account name directly into SQL. Keep MySQL local-only, don't reuse real passwords on it, and leave `-restore_srv` off. Replacing it with an open-source implementation is the long-term fix.
 
 ## Troubleshooting
 
@@ -298,9 +302,19 @@ python3 tests/smoke_test.py
 
 It needs Python 3 and the PHP CLI on your machine (to create test login tokens). The test submits rounds from your machine, so `AUTHORISED_SERVERS` must have included it when the database was created (on Linux, `172.16.0.0/12` covers Docker's network). It adds two test players (IDs `10000101` and `10000102`), so don't run it against a live database.
 
-## Credits and license
+## Credits and licensing
 
-- `lpatch` by [Luigi Auriemma](http://aluigi.org).
-- Not affiliated with or endorsed by Electronic Arts or DICE. You need your own copy of Battlefield 2142.
+The project's own code is released under the [GNU General Public License, version 2](LICENSE). Copyright (C) 2014–2026 maiorBoltach and the project's contributors.
 
-Released under the [GNU General Public License v2.0](LICENSE).
+Not everything in this repository is the project's own work, and the GPL only covers the parts that are:
+
+| Part | License |
+| --- | --- |
+| Web stats server (`web/`), database schema, Docker setup, CI and tests | GPL v2 (this project). Parts of the web code, such as the admin pages, come from the *BF2 Private Statistics* (BF2Statistics) project. |
+| Game server scripts (`python/`) | Based on the scripts that ship with EA's Battlefield 2142 dedicated server and on BF2Statistics; the original authors' terms apply. |
+| `cracked_exe/` | Modified Electronic Arts executables. **Not** covered by this project's license. |
+| `fesl_login_server/fesl_login_server.exe` | Third-party binary with no source or license in this repository. |
+| `fesl_login_server/blat/` | [Blat](https://www.blat.net/), public domain. |
+| `exe_patch/` (`lpatch`) | By [Luigi Auriemma](http://aluigi.org). No license text is included in this repository. |
+
+Not affiliated with or endorsed by Electronic Arts or DICE. You need your own copy of Battlefield 2142.
