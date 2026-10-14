@@ -8,7 +8,7 @@ A self-hosted replacement for the shut-down EA / GameSpy backend of **Battlefiel
 [![License: GPL v2](https://img.shields.io/badge/license-GPL--2.0-blue.svg)](LICENSE)
 ![PHP 5.4 – 8.3](https://img.shields.io/badge/PHP-5.4%20%E2%80%93%208.3-777BB4?logo=php&logoColor=white)
 ![MySQL / MariaDB](https://img.shields.io/badge/MySQL%20%2F%20MariaDB-supported-4479A1?logo=mysql&logoColor=white)
-![Game 1.25 / 1.51](https://img.shields.io/badge/BF2142-1.25%20%7C%201.51-orange)
+![Game 1.51](https://img.shields.io/badge/BF2142-1.51-orange)
 
 </div>
 
@@ -59,7 +59,7 @@ flowchart LR
 | `web/` | PHP stats server; goes in your web server's document root |
 | `python/` | Stats scripts for the dedicated game server |
 | `exe_patch/` | `lpatch` and the patches for the dedicated server executable |
-| `cracked_exe/` | Patched client executables for game versions 1.25 and 1.51 |
+| `cracked_exe/` | Patched client executable for game version 1.51 |
 | `docker/`, `docker-compose.yml` | Docker setup for the web server and database |
 | `tests/` | End-to-end smoke test used by CI |
 
@@ -70,7 +70,7 @@ flowchart LR
 | Web server | Apache with PHP **5.4 – 8.3** (tested on PHP 8.3). PHP 7+ needs the `mysqli` extension. [XAMPP](https://www.apachefriends.org/) is the easiest way to get Apache, PHP and MySQL together. |
 | Database | MySQL 5.5+ / 8.x or MariaDB (tested on MariaDB 10.11) |
 | Login server | Windows, [OpenSSL **1.0.2u** (Win32)](https://slproweb.com/products/Win32OpenSSL.html); newer OpenSSL versions are known not to work. Also needs `libmySQL.dll` from the [MySQL C Connector](https://downloads.mysql.com/archives/c-c/). |
-| Game | Battlefield 2142 client and dedicated server, version **1.25** or **1.51** |
+| Game | Battlefield 2142 client and dedicated server, version **1.51** |
 
 > [!NOTE]
 > Throughout this guide, replace `your.external.ip` with your server's public IP address.
@@ -222,7 +222,7 @@ ALTER TABLE servers MODIFY dnshost varchar(255) NOT NULL DEFAULT '';
 
 1. Install the Battlefield 2142 dedicated server files.
 2. Copy the `python/` folder into the server's main folder, overwriting the existing files.
-3. Patch `BF2142_w32ded.exe` with `exe_patch/lpatch.exe`, using `fesl_1.25.lpatch` for version 1.25 or `fesl.lpatch` for 1.51.
+3. Patch `BF2142_w32ded.exe` with `exe_patch/lpatch.exe`, using `fesl.lpatch`.
 4. Add this line to `C:\Windows\System32\drivers\etc\hosts.ics` (the IP of your **web** server):
    ```
    your.external.ip  stella.prod.gamespy.com
@@ -232,42 +232,11 @@ ALTER TABLE servers MODIFY dnshost varchar(255) NOT NULL DEFAULT '';
 ### 5. Game client
 
 1. Install Battlefield 2142.
-2. Replace `BF2142.exe` with the one from `cracked_exe/` that matches your game version.
-3. Point the game at your server:
-
-<details>
-<summary><b>Version 1.25</b>: edit the hosts file</summary>
-
-Add these lines to `C:\Windows\System32\drivers\etc\hosts.ics`:
-
-```
-your.external.ip bf2142-pc.fesl.ea.com
-your.external.ip gpcm.gamespy.com
-your.external.ip stella.available.gamespy.com
-your.external.ip eapusher.dise.se
-your.external.ip stella.prod.gamespy.com
-your.external.ip stella.ms5.gamespy.com
-your.external.ip ea.com
-your.external.ip gamespy.com
-your.external.ip messaging.ea.com
-your.external.ip fesl.ea.com
-your.external.ip gpsp.gamespy.com
-your.external.ip gamestats.gamespy.com
-your.external.ip eapusher.dice.se
-```
-
-</details>
-
-<details>
-<summary><b>Version 1.51</b>: hex-edit the executable</summary>
-
-The 1.51 executable has the server IP built in as `192.168.1.3`. Replace it with yours:
-
-1. Reverse the order of your IP's four numbers, e.g. `33.44.55.66` → `66.55.44.33`.
-2. Convert that to hex, e.g. `66.55.44.33` → `42372c21` (an [IP-to-hex converter](https://www.browserling.com/tools/ip-to-hex) helps).
-3. In a hex editor, go to address `0045c980` and replace bytes 4–7 (`0301a8c0`) with your value.
-
-</details>
+2. Replace `BF2142.exe` with `cracked_exe/1.51/BF2142.exe`.
+3. Point the game at your server. The executable has the server IP built in as `192.168.1.3`; replace it with yours:
+   1. Reverse the order of your IP's four numbers, e.g. `33.44.55.66` → `66.55.44.33`.
+   2. Convert that to hex, e.g. `66.55.44.33` → `42372c21` (an [IP-to-hex converter](https://www.browserling.com/tools/ip-to-hex) helps).
+   3. In a hex editor, go to address `0045c980` and replace bytes 4–7 (`0301a8c0`) with your value.
 
 ## Security notes
 
