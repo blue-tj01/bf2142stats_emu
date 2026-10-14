@@ -29,7 +29,7 @@ Use at least two machines or VMs on one LAN, so the traffic between them can be 
 | Name | OS | Runs | Example IP |
 | --- | --- | --- | --- |
 | **SRV** | Windows (a VM is fine) | `fesl_login_server.exe`, MySQL/MariaDB and the web stats server (or the Docker stack), the Windows dedicated server, Wireshark | `192.168.1.3` |
-| **LNX** | Linux | the open `fesl_server`, `stcppipe`, `tcpdump`, later the Linux dedicated server | `192.168.1.4` |
+| **LNX** | Linux | the open `fesl_server`, `stcppipe`, `tcpdump` | `192.168.1.4` |
 | **CLI** | Windows | the BF2142 client, Wireshark | `192.168.1.10` |
 
 > [!TIP]
@@ -118,13 +118,13 @@ Point every host name at SRV and run the scenarios below with the 1.51 client. U
 | A11 | Leaving | Quit from the menu; then, separately, close the game while logged in (Alt-F4) | `Goodbye`, and what a dropped connection looks like |
 | A12 | No soldiers | Log in as `fesltest2`, which has none, and stop at the soldier screen | What the game does with an empty `GetSubAccounts` |
 
-For **A6**, also record on SRV (or on LNX, with the Linux dedicated server), with `tcpdump`/Wireshark filtered on the dedicated server's host:
+For **A6**, also record on SRV, with `tcpdump`/Wireshark filtered on the dedicated server's host:
 
 - its FESL login, which the closed server dumps with `-d`;
 - the GameSpy heartbeats (UDP 27900);
 - the HTTP POST of the round's stats to the web server.
 
-The Linux dedicated server may need the FESL patch too. `lpatch` patches any file, so try `exe_patch/fesl.lpatch` on the Linux binary, and write down whether it found the bytes to patch.
+Use the Windows dedicated server, patched with `exe_patch/fesl.lpatch`. There is no FESL patch for the Linux dedicated server, so it isn't part of these tests.
 
 ## Phase B: the open FESL server with the real game
 
@@ -211,7 +211,7 @@ SRV:                 IP, Windows version, fesl_login_server options, database (M
 LNX:                 IP, distribution, fesl_server commit, build (make / make ssl3)
 CLI:                 IP, Windows version
 Hosts file:          which names point where
-Dedicated server:    Windows/Linux, version, patched (yes/no)
+Dedicated server:    Windows, 1.51, patched with fesl.lpatch (yes/no)
 What happened:
 Errors shown:
 ```

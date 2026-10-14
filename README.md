@@ -70,7 +70,7 @@ flowchart LR
 | Web server | Apache with PHP **5.4 – 8.3** (tested on PHP 8.3). PHP 7+ needs the `mysqli` extension. [XAMPP](https://www.apachefriends.org/) is the easiest way to get Apache, PHP and MySQL together. |
 | Database | MySQL 5.5+ / 8.x or MariaDB (tested on MariaDB 10.11) |
 | Login server | Windows, [OpenSSL **1.0.2u** (Win32)](https://slproweb.com/products/Win32OpenSSL.html); newer OpenSSL versions are known not to work. Also needs `libmySQL.dll` from the [MySQL C Connector](https://downloads.mysql.com/archives/c-c/). |
-| Game | Battlefield 2142 client and dedicated server, version **1.51** |
+| Game | Battlefield 2142 client and Windows dedicated server, version **1.51**. The Linux dedicated server isn't supported: there's no FESL patch for it. |
 
 > [!NOTE]
 > Throughout this guide, replace `your.external.ip` with your server's public IP address.
