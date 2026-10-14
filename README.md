@@ -6,7 +6,7 @@ A self-hosted replacement for the shut-down EA / GameSpy backend of **Battlefiel
 
 [![CI](https://github.com/blue-tj01/bf2142stats_emu/actions/workflows/ci.yml/badge.svg)](https://github.com/blue-tj01/bf2142stats_emu/actions/workflows/ci.yml)
 [![License: GPL v2](https://img.shields.io/badge/license-GPL--2.0-blue.svg)](LICENSE)
-![PHP 5.4 – 8.3](https://img.shields.io/badge/PHP-5.4%20%E2%80%93%208.3-777BB4?logo=php&logoColor=white)
+![PHP 8.2 – 8.5](https://img.shields.io/badge/PHP-8.2%20%E2%80%93%208.5-777BB4?logo=php&logoColor=white)
 ![MySQL / MariaDB](https://img.shields.io/badge/MySQL%20%2F%20MariaDB-supported-4479A1?logo=mysql&logoColor=white)
 ![Game 1.51](https://img.shields.io/badge/BF2142-1.51-orange)
 
@@ -67,8 +67,8 @@ flowchart LR
 
 | Component | Version |
 | --- | --- |
-| Web server | Apache with PHP **5.4 – 8.3** (tested on PHP 8.3). PHP 7+ needs the `mysqli` extension. [XAMPP](https://www.apachefriends.org/) is the easiest way to get Apache, PHP and MySQL together. |
-| Database | MySQL 5.5+ / 8.x or MariaDB (tested on MariaDB 10.11) |
+| Web server | Apache with PHP **8.2 – 8.5** and the `mysqli` extension. [XAMPP](https://www.apachefriends.org/) is the easiest way to get Apache, PHP and MySQL together. |
+| Database | MariaDB **10.11 or newer** (recommended) or MySQL **8.4** |
 | Login server | Windows, [OpenSSL **1.0.2u** (Win32)](https://slproweb.com/products/Win32OpenSSL.html); newer OpenSSL versions are known not to work. Also needs `libmySQL.dll` from the [MySQL C Connector](https://downloads.mysql.com/archives/c-c/). |
 | Game | Battlefield 2142 client and dedicated server, version **1.51** |
 
@@ -116,7 +116,7 @@ The database is kept in the `db-data` volume, and logs in `web-logs` and `web-de
 
 1. Install MySQL or MariaDB.
 2. Create a database and a user for it.
-   On **MySQL 8**, create the user with the older password method, because the login server's `libmySQL.dll` can't use MySQL 8's default:
+   On **MySQL**, the login server's `libmySQL.dll` can't use MySQL's default password method, so create the user with the older one. MySQL 8.4 turns it off by default: add `mysql_native_password=ON` under `[mysqld]` in its config and restart it first. MySQL 9 no longer has it at all, which is why MariaDB is recommended.
    ```sql
    CREATE USER 'bf2142'@'localhost' IDENTIFIED WITH mysql_native_password BY 'yourpassword';
    ```
@@ -252,7 +252,7 @@ ALTER TABLE servers MODIFY dnshost varchar(255) NOT NULL DEFAULT '';
 | Problem | Fix |
 | --- | --- |
 | Login server won't start or can't make SSL connections | Use **Win32 OpenSSL 1.0.2u**; newer versions don't work. |
-| Login server can't connect to MySQL 8 | Recreate the user with `mysql_native_password` (see [Database](#1-database)). |
+| Login server can't connect to MySQL | Recreate the user with `mysql_native_password`, enabled first on MySQL 8.4 (see [Database](#1-database)), or use MariaDB. |
 | `libmySQL.dll` missing | Recent XAMPP versions don't include it; get it from the [MySQL C Connector archive](https://downloads.mysql.com/archives/c-c/). |
 | Game shows no stats or garbled responses | Check `display_errors = Off`, that `web/` is at the web root, and that `.htaccess` is being applied. |
 | Round stats are never saved | Make sure the game server's IP is in the `servers` table with `authorised = 1`, and check `../logs/_stats_errors.log`. Turn on `$log_requests` to see exactly what the game server sends. |
@@ -262,8 +262,8 @@ ALTER TABLE servers MODIFY dnshost varchar(255) NOT NULL DEFAULT '';
 
 Every push and pull request runs [CI](.github/workflows/ci.yml):
 
-- a syntax check of all PHP files on PHP 7.4 – 8.3;
-- the end-to-end smoke test (`tests/smoke_test.py`) against MySQL 8.0 and MariaDB 10.11, and against the Docker Compose stack;
+- a syntax check of all PHP files on PHP 8.2 – 8.5;
+- the end-to-end smoke test (`tests/smoke_test.py`) against MariaDB 10.11 and 11.8 and MySQL 8.4, and against the Docker Compose stack;
 - the open FESL server's tests: capture replays, a server end-to-end test, and the same tests under AddressSanitizer/UBSan, plus a build of stcppipe (see [`fesl_server/`](fesl_server/README.md#getting-started)).
 
 The smoke test uploads round snapshots like a game server, calls every game endpoint like a client, and checks the responses and the database. To run it locally against the Docker stack:

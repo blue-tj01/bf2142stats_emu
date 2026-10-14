@@ -71,7 +71,7 @@ FESL_DB_NAME=bf2142 FESL_DB_USER=fesl FESL_DB_PASS=... \
 DB_CMD="mysql -h127.0.0.1 -uroot -p... bf2142" python3 test_server.py
 ```
 
-CI runs all of these on every pull request and on every push to `master`, against MariaDB 10.11 and MySQL 8.0, plus the stcppipe build.
+CI runs all of these on every pull request and on every push to `master`, against MariaDB 10.11 and 11.8 and MySQL 8.4, plus the stcppipe build.
 
 ## Running the FESL server
 
